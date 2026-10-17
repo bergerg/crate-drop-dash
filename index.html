@@ -449,7 +449,7 @@ function loadBest(){try{return +localStorage.getItem('cdd-best')||0}catch(e){ret
 function startSolo(){
   buildLevel();round=0;scores=[0,0];
   boxes=[];parts=[];pops=[];runner=newRunner(0);lives=3;
-  crane={pi:1,sx:W/2+40,type:0,cd:1.5,kick:0,plan:null,ai:true};
+  crane={pi:1,sx:W/2+40,type:0,cd:3,kick:0,plan:null,ai:true};
   timeLeft=0;cam.x=0;roundHits=0;state='intro';introT=3.2;lastTick=4;solo.best=loadBest();
 }
 const meters=()=>runner?Math.max(0,Math.floor((runner.best-CHECKS[0]*T)/T)):0;
@@ -487,15 +487,15 @@ function updateAI(dt){
   if(!c.plan){
     const pool=['crate','crate','crate'];if(L>=2)pool.push('spring');if(L>=4)pool.push('iron','crate');if(L>=8)pool.push('iron');
     c.type=BOXTYPES.indexOf(pool[R(0,pool.length-1)]);
-    c.plan={err:(Math.random()*2-1)*36/m,wait:(1.5/m)*(.6+Math.random()*.8)};
+    c.plan={err:(Math.random()*2-1)*60/m,wait:(2/m)*(.6+Math.random()*.8)};
   }
   const gm=BOX[BOXTYPES[c.type]].grav,dy=Math.max(8,r.y-42);
-  const tf=Math.sqrt(2*dy/(950*gm)),lead=Math.min(1,.15*m);
+  const tf=Math.sqrt(2*dy/(950*gm)),lead=Math.min(1,.1*L);
   const target=r.x+r.w/2+r.vx*tf*lead+c.plan.err-cam.x;
   const dx=target-c.sx,spd=40*m;
   c.sx=clamp(c.sx+clamp(dx,-spd*dt,spd*dt),12,W-12);
   if(c.cd<=0&&r.inv<=0){c.plan.wait-=dt;
-    if(c.plan.wait<=0&&Math.abs(dx)<4){const k=dropBox(c);c.cd=BOX[k].cd*2.2/m;c.plan=null}}
+    if(c.plan.wait<=0&&Math.abs(dx)<4){const k=dropBox(c);c.cd=BOX[k].cd*5.5/m;c.plan=null}}
 }
 function startRound(r){
   round=r;const run=r===0?0:1,drop=1-run;
