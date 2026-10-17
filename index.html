@@ -540,7 +540,7 @@ function stunRunner(b){
   burst(r.x+5,r.y+2,['#ffd34e','#ffffff'],10,120,300,.5);
   pop(b.kind==='iron'?'CLANG!':'BONK!',r.x+5,r.y-8,PCOL[crane.pi].main);
 }
-const AIR_MAX=52; // sideways speed while jumping (walking top speed is 15)
+const AIR_MAX=64; // sideways speed while jumping (walking top speed is 15)
 function updateRunner(dt){
   const r=runner,pi=r.pi;
   r.inv=Math.max(0,r.inv-dt);
