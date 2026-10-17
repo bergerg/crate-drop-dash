@@ -60,8 +60,10 @@ kbd{font-family:var(--display);font-size:12px;background:#0f0e22;border:1px soli
     </div>
   </div>
   <p class="note">Each player runs once. <b>Runner</b> earns 1000 + time bonus for finishing, or points for distance. <b>Dropper</b> earns 50 per hit. Boxes: <b>Crate</b> (fast reload), <b>Spring</b> (bounces the runner up, careful), <b>Iron</b> (long stun, slow reload). Jump against a wall to climb it. <kbd>Esc</kbd> pause · <kbd>M</kbd> sound.</p>
+  <p class="note"><b>Online play:</b> set MODE to ONLINE. One player creates a room and reads out the 4-letter code, the other joins with it. Online, each player can use WASD or the arrow keys.</p>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script>
 (()=>{
 const cv=document.getElementById('game'), ctx=cv.getContext('2d');
@@ -192,30 +194,128 @@ const SFX={
   sel:()=>snd(880,.05,'square',0,.04)
 };
 
+/* ---------- online (Supabase realtime, host runs the game) ---------- */
+const SB_URL='https://lugspwxtjzqorsjezuga.supabase.co',SB_KEY='sb_publishable_V0bbJGmeBizrFqxh9InExQ_vOXZynh3';
+const net={mode:'local',role:null,me:0,code:'',ch:null,peer:false,gotMap:false,rh:{},rtap:new Set(),seen:{},ev:[],lastSend:0,lastIn:0,inSent:'',taps:{u:0,d:0,g:0,p:0,q:0},status:'',err:''};
+let sb=null,joinBuf='',boxSeq=0;
+const CODE_ABC='ABCDEFGHJKLMNPQRSTUVWXYZ';
+function sbClient(){if(!window.supabase)throw new Error('lib');return sb||(sb=window.supabase.createClient(SB_URL,SB_KEY,{realtime:{params:{eventsPerSecond:40}}}))}
+for(const k in SFX){const f=SFX[k];SFX[k]=()=>{f();if(net.role==='host'&&net.peer)net.ev.push(['s',k])}}
+function send(m){if(net.ch)net.ch.send({type:'broadcast',event:'m',payload:m}).catch(()=>{})}
+function netError(msg){if(net.role)leaveRoom(true);state='netmsg';net.err=msg}
+function leaveRoom(silent){
+  if(net.ch){try{if(!silent)send({k:'bye'});const c=net.ch;setTimeout(()=>{try{sbClient().removeChannel(c)}catch(e){}},300)}catch(e){}}
+  Object.assign(net,{role:null,ch:null,peer:false,gotMap:false,rh:{},seen:{},ev:[],code:''});net.rtap.clear();
+}
+function openRoom(role,code){
+  Object.assign(net,{role,me:role==='host'?0:1,code,peer:false,gotMap:false,rh:{},seen:{},ev:[],taps:{u:0,d:0,g:0,p:0,q:0},inSent:''});
+  state='lobby';net.status=role==='host'?'Connecting...':'Looking for room '+code+'...';
+  let c;
+  try{c=sbClient().channel('cdd-'+code,{config:{broadcast:{self:false},presence:{key:role}}})}
+  catch(e){netError('Online play needs the hosted version of the game.');return}
+  net.ch=c;
+  c.on('broadcast',{event:'m'},({payload})=>onMsg(payload));
+  c.on('presence',{event:'leave'},({key})=>{if(net.ch===c&&key!==role&&net.peer)netError(role==='host'?'Player 2 left the game.':'The host left the game.')});
+  c.subscribe(async st=>{
+    if(net.ch!==c)return;
+    if(st==='SUBSCRIBED'){
+      try{await c.track({at:Date.now()})}catch(e){}
+      if(role==='host')net.status='Waiting for player 2 to join...';
+      else{send({k:'hello'});setTimeout(()=>{if(net.ch===c&&!net.peer)netError('Room '+code+' not found. Check the code.')},6000)}
+    }else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT')netError('Could not connect. Online play needs the hosted version of the game.');
+  });
+}
+function hostRoom(){let code='';for(let i=0;i<4;i++)code+=CODE_ABC[Math.floor(Math.random()*CODE_ABC.length)];openRoom('host',code)}
+function onMsg(m){
+  if(!m||!net.role)return;
+  if(m.k==='bye'){netError(net.role==='host'?'Player 2 left the game.':'The host left the game.');return}
+  if(net.role==='host'){
+    if(m.k==='hello'){if(net.peer){send({k:'full'});return}net.peer=true;send({k:'welcome'});newGame();return}
+    if(m.k==='in'){net.rh={l:m.h[0],r:m.h[1],u:m.h[2],d:m.h[3]};
+      for(const t in m.t){const was=net.seen[t]||0;if(m.t[t]>was){net.rtap.add(t);net.seen[t]=m.t[t]}}}
+  }else{
+    if(m.k==='full'){netError('That room already has 2 players.');return}
+    if(m.k==='welcome'){net.peer=true;net.status='Joined! Waiting for the host...';return}
+    if(m.k==='start'){net.peer=true;for(let i=0;i<map.length;i++)map[i]=+m.map[i]||0;LC=m.lc;FINISH_X=(LC-8)*T;CHECKS=m.ch;net.gotMap=true;boxes=[];parts=[];return}
+    if(m.k==='s'&&net.gotMap)applySnap(m);
+  }
+}
+const r1=v=>Math.round(v*10)/10;
+function sendSnap(){
+  send({k:'s',st:state,rd:round,sc:scores,tl:r1(timeLeft),it:r1(introT),gt:r1(goT),et:r1(endT),rh:roundHits,res:result,
+    r:runner&&[runner.pi,r1(runner.x),r1(runner.y),runner.h,runner.face,runner.sliding?1:0,runner.ground?1:0,Math.round(runner.vx),r1(runner.stun),r1(runner.inv),runner.check,r1(runner.anim)],
+    c:crane&&[crane.pi,r1(crane.sx),crane.type,r1(crane.cd),r1(crane.kick)],
+    b:boxes.map(b=>[b.id,BOXTYPES.indexOf(b.kind),r1(b.x),r1(b.y),r1(b.age),r1(b.squash),b.landed?1:0]),
+    ev:net.ev});
+  net.ev=[];
+}
+function applySnap(m){
+  state=m.st;round=m.rd;scores=m.sc;timeLeft=m.tl;introT=m.it;goT=m.gt;endT=m.et;roundHits=m.rh;result=m.res;
+  if(m.r){const[pi,x,y,h,face,sl,gr,vx,stun,inv,check,anim]=m.r;
+    if(!runner||runner.pi!==pi||Math.abs(runner.x-x)>48){runner=newRunner(pi);runner.x=x;runner.y=y}
+    Object.assign(runner,{pi,tx:x,ty:y,h,face,sliding:!!sl,ground:!!gr,vx,stun,inv,check,anim})}else runner=null;
+  if(m.c){const[pi,sx,type,cd,kick]=m.c;if(!crane||crane.pi!==pi)crane={pi,sx};Object.assign(crane,{pi,tsx:sx,type,cd,kick})}else crane=null;
+  const old=new Map(boxes.map(b=>[b.id,b]));
+  boxes=m.b.map(([id,k,x,y,age,sq,l])=>{const o=old.get(id);const b=o||{id,kind:BOXTYPES[k],x,y,w:16,h:16};
+    if(Math.abs(b.y-y)>40)b.y=y;b.tx=x;b.ty=y;b.age=age;b.squash=sq;b.landed=!!l;return b});
+  for(const e of m.ev){
+    if(e[0]==='s'){const f=SFX[e[1]];if(f)f()}
+    else if(e[0]==='b')burst(e[1],e[2],e[3],e[4],e[5],e[6],e[7],e[8]);
+    else if(e[0]==='p')pops.push({text:e[1],x:e[2],y:e[3],t:0,col:e[4]});
+    else if(e[0]==='k')addShake(e[1]);
+  }
+}
+function guestUpdate(dt){
+  const k=Math.min(1,dt*18);
+  if(runner&&runner.tx!==undefined){runner.x+=(runner.tx-runner.x)*k;runner.y+=(runner.ty-runner.y)*k}
+  if(crane&&crane.tsx!==undefined)crane.sx+=(crane.tsx-crane.sx)*k;
+  for(const b of boxes){b.x+=(b.tx-b.x)*k;b.y+=(b.ty-b.y)*k}
+  if(state==='play'||state==='intro')timeLeft=Math.max(0,timeLeft-(state==='play'?dt:0));
+  updateParts(dt);updateCam(dt);
+  // my input -> host
+  const any=c=>pressed.has(c);
+  if(any(KEYS[0].u)||any(KEYS[1].u))net.taps.u++;
+  if(any(KEYS[0].d)||any(KEYS[1].d))net.taps.d++;
+  if(go())net.taps.g++;
+  if(any('Escape')||any('KeyP'))net.taps.p++;
+  if(any('KeyQ'))net.taps.q++;
+  if(state==='final'&&any('Escape')){toMenu();return}
+  const h=['l','r','u','d'].map(x=>myKeys(x)?1:0);
+  const sig=h.join('')+JSON.stringify(net.taps);
+  if(sig!==net.inSent||time-net.lastIn>.15){net.inSent=sig;net.lastIn=time;send({k:'in',h,t:net.taps})}
+}
+
 /* ---------- input ---------- */
 const down=new Set(),pressed=new Set();
 const KEYS=[{l:'KeyA',r:'KeyD',u:'KeyW',d:'KeyS'},{l:'ArrowLeft',r:'ArrowRight',u:'ArrowUp',d:'ArrowDown'}];
-addEventListener('keydown',e=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();if(!e.repeat)pressed.add(e.code);down.add(e.code);audioInit()});
+addEventListener('keydown',e=>{if(state==='join'){if(/^[a-zA-Z]$/.test(e.key)&&joinBuf.length<4){joinBuf+=e.key.toUpperCase();SFX.sel()}else if(e.key==='Backspace'){joinBuf=joinBuf.slice(0,-1);e.preventDefault()}}if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();if(!e.repeat)pressed.add(e.code);down.add(e.code);audioInit()});
 addEventListener('keyup',e=>down.delete(e.code));
-addEventListener('blur',()=>{down.clear();if(state==='play')state='pause'});
-function menuChange(i,d){if(i===0)mapIdx=(mapIdx+d+MAPS.length)%MAPS.length;else if(i===1)lenIdx=(lenIdx+d+LENGTHS.length)%LENGTHS.length;else return;buildLevel();SFX.sel()}
+addEventListener('blur',()=>{down.clear();if(state==='play'&&!net.role)state='pause'});
+addEventListener('paste',e=>{if(state!=='join')return;const t=(e.clipboardData&&e.clipboardData.getData('text')||'').toUpperCase().replace(/[^A-Z]/g,'');if(t)joinBuf=t.slice(0,4)});
+const MENU_Y=[40,56,72,90,103];
+const menuRows=()=>net.mode==='online'?5:4;
+function menuAct(i){if(net.mode==='local'){newGame();return}if(i===4){state='join';joinBuf='';return}hostRoom()}
+function menuChange(i,d){if(i===0){net.mode=net.mode==='local'?'online':'local';if(menuSel>=menuRows())menuSel=menuRows()-1;SFX.sel();return}if(i===1)mapIdx=(mapIdx+d+MAPS.length)%MAPS.length;else if(i===2)lenIdx=(lenIdx+d+LENGTHS.length)%LENGTHS.length;else return;buildLevel();SFX.sel()}
 function gpos(e){const r=cv.getBoundingClientRect();return[(e.clientX-r.left)/r.width*W,(e.clientY-r.top)/r.height*H]}
-function menuRow(gy){for(let i=0;i<2;i++){const y=46+i*20;if(gy>=y-5&&gy<=y+15)return i}return gy>=80&&gy<=98?2:-1}
+function menuRow(gy){for(let i=0;i<menuRows();i++){const y=MENU_Y[i];if(gy>=y-3&&gy<=y+(i<3?12:9))return i}return -1}
 cv.addEventListener('pointerdown',e=>{cv.focus();audioInit();const[gx,gy]=gpos(e);
-  if(state==='title'){const i=menuRow(gy);if(i<0)return;menuSel=i;if(i===2)newGame();else menuChange(i,gx<230?-1:1)}
-  else if(state!=='play')pressed.add('Enter')});
+  if(state==='title'){const i=menuRow(gy);if(i<0)return;menuSel=i;if(i>=3)menuAct(i);else menuChange(i,gx<230?-1:1)}
+  else if(state!=='play'&&state!=='lobby'&&state!=='join')pressed.add('Enter')});
 cv.addEventListener('pointermove',e=>{if(state!=='title')return;const i=menuRow(gpos(e)[1]);if(i>=0)menuSel=i});
-const held=(pi,k)=>down.has(KEYS[pi][k]);
-const tap=(pi,k)=>pressed.has(KEYS[pi][k]);
-const go=()=>pressed.has('Enter')||pressed.has('Space')||pressed.has('NumpadEnter');
+const myKeys=k=>down.has(KEYS[0][k])||down.has(KEYS[1][k]);
+const held=(pi,k)=>net.role?(pi===net.me?myKeys(k):!!net.rh[k]):down.has(KEYS[pi][k]);
+const tap=(pi,k)=>net.role?(pi===net.me?(pressed.has(KEYS[0][k])||pressed.has(KEYS[1][k])):net.rtap.has(k)):pressed.has(KEYS[pi][k]);
+const go=()=>pressed.has('Enter')||pressed.has('Space')||pressed.has('NumpadEnter')||(net.role==='host'&&net.rtap.has('g'));
+const pauseKey=()=>pressed.has('Escape')||pressed.has('KeyP')||(net.role==='host'&&net.rtap.has('p'));
+const quitKey=()=>pressed.has('KeyQ')||(net.role==='host'&&net.rtap.has('q'));
 
 /* ---------- state ---------- */
 let state='title',round=0,scores=[0,0],runner=null,crane=null,boxes=[],parts=[],pops=[],cam={x:0},
     timeLeft=ROUND_TIME,introT=0,goT=0,endT=0,shake=0,time=0,roundHits=0,last=null,lastTick=4;
 
 function newRunner(pi){return{pi,x:CHECKS[0]*T+3,y:9*T-20,w:10,h:20,vx:0,vy:0,face:1,ground:false,coyote:0,buffer:0,slideT:0,sliding:false,stun:0,inv:0,wall:0,anim:0,check:0,best:0}}
-function toMenu(){state='title';runner=null;crane=null;boxes=[];parts=[];pops=[];buildLevel()}
-function newGame(){scores=[0,0];buildLevel();startRound(0)}
+function toMenu(){if(net.role)leaveRoom();state='title';runner=null;crane=null;boxes=[];parts=[];pops=[];buildLevel()}
+function newGame(){scores=[0,0];buildLevel();if(net.role==='host')send({k:'start',map:Array.from(map).join(''),lc:LC,ch:CHECKS});startRound(0)}
 function startRound(r){
   round=r;const run=r===0?0:1,drop=1-run;
   boxes=[];parts=[];pops=[];runner=newRunner(run);
@@ -235,12 +335,12 @@ function overlaps(e){
 const blocked=r=>overlaps(r).length>0;
 const canStand=r=>!blocked({x:r.x,y:r.y-8,w:r.w,h:20});
 
-function burst(x,y,cols,n,spd=90,gr=500,life=.5,size=1){for(let i=0;i<n;i++){const a=Math.random()*Math.PI*2,s=spd*(.4+Math.random()*.8);parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-spd*.4,g:gr,life:life*(.6+Math.random()*.6),c:cols[i%cols.length],s:size+(Math.random()<.3?1:0)})}}
+function burst(x,y,cols,n,spd=90,gr=500,life=.5,size=1){if(net.role==='host'&&net.peer)net.ev.push(['b',Math.round(x),Math.round(y),cols,n,spd,gr,life,size]);for(let i=0;i<n;i++){const a=Math.random()*Math.PI*2,s=spd*(.4+Math.random()*.8);parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-spd*.4,g:gr,life:life*(.6+Math.random()*.6),c:cols[i%cols.length],s:size+(Math.random()<.3?1:0)})}}
 const dust=(x,y)=>burst(x,y,['#efe1c0','#d9c69c'],6,40,120,.35);
-function pop(text,x,y,col){pops.push({text,x,y,t:0,col})}
+function pop(text,x,y,col){pops.push({text,x,y,t:0,col});if(net.role==='host'&&net.peer)net.ev.push(['p',text,Math.round(x),Math.round(y),col])}
 function removeBox(b,fx=true){const i=boxes.indexOf(b);if(i<0)return;boxes.splice(i,1);if(fx)burst(b.x+8,b.y+8,BOX[b.kind].cols.concat(['#ffffff']),14,110,520,.6);resettle()}
 function resettle(){for(const b of boxes)if(b.landed){b.landed=false;b.vy=0;b.fresh=false}}
-function addShake(v){if(!reduceMotion)shake=Math.max(shake,v)}
+function addShake(v){if(!reduceMotion)shake=Math.max(shake,v);if(net.role==='host'&&net.peer)net.ev.push(['k',v])}
 
 /* ---------- runner ---------- */
 function standUp(r){if(r.sliding&&canStand(r)){r.sliding=false;r.y-=8;r.h=20;return true}return !r.sliding}
@@ -324,7 +424,7 @@ function updateCrane(dt){
   c.sx=clamp(c.sx+m*170*dt,12,W-12);c.cd=Math.max(0,c.cd-dt);c.kick=Math.max(0,c.kick-dt);
   if(tap(pi,'u')){c.type=(c.type+1)%3;SFX.sel()}
   if(tap(pi,'d')&&c.cd<=0){const k=BOXTYPES[c.type];
-    boxes.push({kind:k,x:Math.round(cam.x+c.sx-8),y:26,w:16,h:16,vy:40,landed:false,squash:0,fresh:true,age:0});
+    boxes.push({id:++boxSeq,kind:k,x:Math.round(cam.x+c.sx-8),y:26,w:16,h:16,vy:40,landed:false,squash:0,fresh:true,age:0});
     c.cd=BOX[k].cd;c.kick=.15;SFX.drop()}
 }
 function updateBoxes(dt){
@@ -377,25 +477,30 @@ function updateCam(dt){
 }
 function update(dt){
   time+=dt;
-  if(pressed.has('KeyM'))muted=!muted;
+  if(pressed.has('KeyM')&&state!=='join')muted=!muted;
+  if(net.role==='guest'&&net.gotMap&&!['title','lobby','join','netmsg'].includes(state)){guestUpdate(dt);return}
   switch(state){
+    case'join':{if(pressed.has('Escape')){state='title';break}if(pressed.has('Enter')&&joinBuf.length===4)openRoom('guest',joinBuf);break}
+    case'lobby':{updateParts(dt);if(pressed.has('Escape'))toMenu();if(net.role==='guest')guestUpdate(dt);break}
+    case'netmsg':{if(go()||pressed.has('Escape'))toMenu();break}
     case'title':{const span=LC*T-W,p=(time*25)%(2*span);cam.x=p<span?p:2*span-p;updateParts(dt);
       const has=(...k)=>k.some(c=>pressed.has(c));
-      if(has('KeyW','ArrowUp')){menuSel=(menuSel+2)%3;SFX.sel()}
-      if(has('KeyS','ArrowDown')){menuSel=(menuSel+1)%3;SFX.sel()}
+      const n=menuRows();
+      if(has('KeyW','ArrowUp')){menuSel=(menuSel+n-1)%n;SFX.sel()}
+      if(has('KeyS','ArrowDown')){menuSel=(menuSel+1)%n;SFX.sel()}
       const d=has('KeyA','ArrowLeft')?-1:has('KeyD','ArrowRight')?1:0;
       if(d)menuChange(menuSel,d);
-      if(go()){newGame()}break}
+      if(go())menuAct(Math.max(3,menuSel));break}
     case'intro':{introT-=dt;const n=Math.ceil(introT);if(n<lastTick&&n>0){lastTick=n;SFX.tick()}
       updateParts(dt);updateCam(dt);updateBoxes(dt);
       if(introT<=0){state='play';goT=.8;SFX.go()}break}
-    case'play':{if(pressed.has('Escape')||pressed.has('KeyP')){state='pause';break}
+    case'play':{if(pauseKey()){state='pause';break}
       goT=Math.max(0,goT-dt);timeLeft-=dt;
       if(timeLeft<=0){timeLeft=0;endRound(false);break}
       updateCrane(dt);updateRunner(dt);if(state!=='play')break;updateBoxes(dt);updateParts(dt);updateCam(dt);break}
-    case'pause':{if(pressed.has('KeyQ')){toMenu();break}if(pressed.has('Escape')||pressed.has('KeyP')||go())state='play';break}
+    case'pause':{if(quitKey()){toMenu();break}if(pauseKey()||go())state='play';break}
     case'roundEnd':{endT+=dt;updateParts(dt);updateBoxes(dt);if(endT>.8&&go()){if(round===0)startRound(1);else{state='final';endT=0;SFX.win()}}break}
-    case'final':{endT+=dt;updateParts(dt);if(endT>.8&&pressed.has('Escape')){toMenu();break}if(endT>.8&&go()){newGame()}break}
+    case'final':{endT+=dt;updateParts(dt);if(endT>.8&&(pressed.has('Escape')||quitKey())){toMenu();break}if(endT>.8&&go()){newGame()}break}
   }
 }
 
@@ -478,33 +583,64 @@ function render(){
   for(const p of pops){const a=1-p.t;ctx.globalAlpha=Math.max(0,a);txt(p.text,p.x-cam.x,p.y-p.t*14,6,p.col,'center');ctx.globalAlpha=1}
 
   if(state==='title'){
-    panel(18,8,284,164);
-    txt('CRATE DROP DASH',160,15,13,'#ffd34e','center');
-    txt('1 runs the course, 1 drops boxes, then swap',160,33,4.5,'#c9c3dd','center');
-    const rows=[['MAP',MAPS[mapIdx].name],['LENGTH',LENGTHS[lenIdx].name]];
-    rows.forEach(([k,v],i)=>{const y=46+i*20,on=menuSel===i,c=on?'#ffd34e':'#f3eedd';
+    panel(18,6,284,168);
+    txt('CRATE DROP DASH',160,12,12,'#ffd34e','center');
+    txt('1 runs the course, 1 drops boxes, then swap',160,28,4.5,'#c9c3dd','center');
+    const online=net.mode==='online';
+    const rows=[['MODE',online?'ONLINE':'LOCAL'],['MAP',MAPS[mapIdx].name],['LENGTH',LENGTHS[lenIdx].name]];
+    rows.forEach(([k,v],i)=>{const y=MENU_Y[i],on=menuSel===i,c=on?'#ffd34e':'#f3eedd';
       txt((on?'> ':'  ')+k,40,y,7,c);const vc=on?'#ffffff':'#c9c3dd';txt('<',182,y,7,on?'#ffd34e':vc,'center');txt(v,230,y,7,vc,'center');txt('>',278,y,7,on?'#ffd34e':vc,'center')});
-    txt(MAPS[mapIdx].desc,230,55,4.5,'#aaa4cb','center');
-    const on=menuSel===2;txt((on?'> ':'  ')+'START',40,86,7,on?'#ffd34e':'#f3eedd');
-    if(on&&blink())txt('ENTER OR CLICK',230,87,6,'#ffffff','center');
-    // minimap
-    const mw=LC*2,mx=160-mw/2,my=104;
+    txt(online?'Each player on their own computer':'2 players share this keyboard',230,MENU_Y[0]+9,4,'#aaa4cb','center');
+    txt(MAPS[mapIdx].desc,230,MENU_Y[1]+9,4,'#aaa4cb','center');
+    (online?['CREATE ROOM','JOIN ROOM']:['START']).forEach((a,j)=>{const i=3+j,y=MENU_Y[i],on=menuSel===i;
+      txt((on?'> ':'  ')+a,40,y,7,on?'#ffd34e':'#f3eedd');if(on&&blink())txt('ENTER OR CLICK',230,y+1,6,'#ffffff','center')});
+    const mw=LC*2,mx=160-mw/2,my=118;
     ctx.fillStyle='#6cc4f5';ctx.fillRect(mx*S,my*S,mw*S,ROWS*2*S);
     const cols={1:'#7a4f33',2:'#6b6f8f',3:'#b97a40'};
     for(let ty=0;ty<ROWS;ty++)for(let tx=0;tx<LC;tx++){const v=map[ty*COLS+tx];if(!v)continue;
       ctx.fillStyle=(v===1&&(ty===0||!map[(ty-1)*COLS+tx]))?'#4fa83d':cols[v];ctx.fillRect((mx+tx*2)*S,(my+ty*2)*S,2*S,2*S)}
     CHECKS.slice(1).forEach(c=>{ctx.fillStyle='#f3eedd';ctx.fillRect((mx+c*2)*S,(my+12)*S,S,6*S)});
     ctx.fillStyle='#ffd34e';ctx.fillRect((mx+(LC-8)*2)*S,(my+6)*S,2*S,12*S);
-    txt('Click < > to change, or use W S A D / arrow keys. Enter starts.',160,134,4,'#c9c3dd','center');
-    txt('Click the game first if keys do nothing',160,146,4,'#aaa4cb','center');
+    txt('Click < > to change, or use W S A D / arrow keys. Enter starts.',160,146,4,'#c9c3dd','center');
+    txt(online?'The room creator picks the map and length':'Click the game first if keys do nothing',160,156,4,'#aaa4cb','center');
     return;
   }
+  if(state==='join'){
+    panel(50,40,220,100);
+    txt('JOIN ROOM',160,48,10,'#ffd34e','center');
+    txt('Type the 4-letter code from the other player',160,66,4.5,'#c9c3dd','center');
+    for(let i=0;i<4;i++){const x=112+i*26;ctx.fillStyle='#0f0e22';ctx.fillRect(x*S,80*S,20*S,22*S);ctx.fillStyle=i===joinBuf.length&&blink()?'#ffd34e':'#4a4580';ctx.fillRect(x*S,101*S,20*S,S);
+      if(joinBuf[i])txt(joinBuf[i],x+10,84,11,'#ffffff','center')}
+    txt(joinBuf.length===4?'ENTER TO JOIN':'Backspace to fix',160,112,6,joinBuf.length===4?'#ffd34e':'#aaa4cb','center');
+    txt('Esc to go back',160,126,4.5,'#aaa4cb','center');
+    return;
+  }
+  if(state==='lobby'){
+    panel(50,40,220,100);
+    if(net.role==='host'){
+      txt('YOUR ROOM CODE',160,48,7,'#c9c3dd','center');
+      txt(net.code||'....',160,60,22,'#ffd34e','center');
+      txt('Player 2: pick ONLINE > JOIN ROOM',160,94,5,'#f3eedd','center');
+      txt('and type this code',160,102,5,'#f3eedd','center');
+    }else txt('JOINING '+net.code,160,60,10,'#ffd34e','center');
+    txt(net.status,160,116,4.5,'#aaa4cb','center');
+    txt('Esc to cancel',160,127,4.5,'#aaa4cb','center');
+    return;
+  }
+  if(state==='netmsg'){
+    panel(50,56,220,64);
+    txt(net.err,160,70,5,'#ffffff','center');
+    if(blink())txt('ENTER: BACK TO MENU',160,96,6,'#ffd34e','center');
+    return;
+  }
+  if(!runner||!crane)return;
 
   // HUD
   const rp=PCOL[runner.pi],dp=PCOL[crane.pi];
   txt('RUNNER '+rp.name,6,3,6,rp.main);
   txt('DROPPER '+dp.name,W-6,3,6,dp.main,'right');
-  txt(BOX[BOXTYPES[crane.type]].name+(crane.pi===0?'  W=switch':'  ↑=switch'),W-6,10.5,4,'#f3eedd','right');
+  txt(BOX[BOXTYPES[crane.type]].name+(net.role?'  W/↑=switch':crane.pi===0?'  W=switch':'  ↑=switch'),W-6,10.5,4,'#f3eedd','right');
+  if(net.role)txt('ROOM '+net.code+'  ·  YOU ARE '+PCOL[net.me].name,160,H-18,4,'#f3eedd','center');
   const tl=Math.ceil(timeLeft);
   txt(String(tl),160,2,10,tl<=10&&blink()?'#ff5b6b':'#ffffff','center');
   txt('HITS '+roundHits,6,10.5,4,'#f3eedd');
@@ -512,12 +648,13 @@ function render(){
   if(state==='intro'){
     panel(70,52,180,76);
     txt('ROUND '+(round+1)+' OF 2',160,60,8,'#ffd34e','center');
-    txt('RUNNER: '+rp.name+' ('+rp.keys+')',160,76,6,rp.main,'center');
-    txt('DROPPER: '+dp.name+' ('+dp.keys+')',160,86,6,dp.main,'center');
+    const tag=pi=>net.role?(pi===net.me?' (YOU)':''):' ('+PCOL[pi].keys+')';
+    txt('RUNNER: '+rp.name+tag(runner.pi),160,76,6,rp.main,'center');
+    txt('DROPPER: '+dp.name+tag(crane.pi),160,86,6,dp.main,'center');
     txt(String(Math.max(1,Math.ceil(introT))),160,100,14,'#ffffff','center');
   }
   if(state==='play'&&goT>0)txt('GO!',160,70,20,'#ffd34e','center');
-  if(state==='pause'){panel(90,62,140,48);txt('PAUSED',160,72,10,'#ffd34e','center');txt('Enter or Esc to resume',160,90,5,'#f3eedd','center');txt('Q to quit to menu',160,99,5,'#aaa4cb','center')}
+  if(state==='pause'){panel(90,62,140,48);txt('PAUSED',160,72,10,'#ffd34e','center');txt('Enter or Esc to resume',160,90,5,'#f3eedd','center');txt(net.role?'Q to leave the room':'Q to quit to menu',160,99,5,'#aaa4cb','center')}
   if(state==='roundEnd'&&result){
     const R=result,rr=PCOL[R.runner],dd=PCOL[R.dropper];
     panel(50,40,220,100);
@@ -546,7 +683,8 @@ function frame(now){
   if(last===null)last=now;
   acc+=Math.min(.05,(now-last)/1000);last=now;
   let first=true;
-  while(acc>=STEP){update(STEP);acc-=STEP;if(first){pressed.clear();first=false}}
+  while(acc>=STEP){update(STEP);acc-=STEP;if(first){pressed.clear();net.rtap.clear();first=false}}
+  if(net.role==='host'&&net.peer&&state!=='lobby'&&time-net.lastSend>=.05){net.lastSend=time;sendSnap()}
   render();requestAnimationFrame(frame);
 }
 if(document.fonts&&document.fonts.load){document.fonts.load('16px "Silkscreen"').catch(()=>{})}
