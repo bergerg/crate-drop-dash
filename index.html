@@ -45,15 +45,18 @@ kbd{font-family:var(--display);font-size:12px;background:#0f0e22;border:1px soli
 #code[hidden]{display:none}
 .touch{display:flex;gap:10px;align-items:stretch;user-select:none;-webkit-user-select:none}
 .touch[hidden]{display:none}
-.pad{flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:6px;border:2px solid var(--pc,var(--line));border-radius:8px;background:var(--panel);min-width:0}
+.pad{flex:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;padding:6px;border:2px solid var(--pc,var(--line));border-radius:8px;background:var(--panel);min-width:0}
 .pad[data-p="0"]{--pc:var(--p1)} .pad[data-p="1"]{--pc:var(--p2)}
-.touch button{font-family:var(--display);font-size:20px;color:var(--fg);background:#0f0e22;border:1px solid var(--line);border-bottom-width:4px;border-radius:8px;min-height:62px;padding:4px 0;touch-action:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;-webkit-tap-highlight-color:transparent}
+.touch button{min-width:0;font-family:var(--display);font-size:20px;color:var(--fg);background:#0f0e22;border:1px solid var(--line);border-bottom-width:4px;border-radius:8px;min-height:62px;padding:4px 0;touch-action:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;-webkit-tap-highlight-color:transparent}
 .touch button small{font-family:var(--body);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .touch button.on{background:var(--pc,var(--gold));color:#15132b;border-bottom-width:1px;transform:translateY(3px)}
 .touch button.on small{color:#15132b}
 .touch .pause{flex:0 0 52px;--pc:var(--gold)}
 .touch[data-mode="online"] .pad[data-p="1"]{display:none}
-.touch[data-mode="online"] .pad{grid-template-columns:1fr 1fr 2fr 1fr 1fr}
+.touch[data-mode="online"] .pad{grid-template-columns:repeat(2,minmax(0,1fr)) 2fr repeat(2,minmax(0,1fr))}
+.touch:not(.ingame) .pad,.touch:not(.ingame) .pause{display:none!important}
+.touch:not(.ingame){justify-content:flex-end}
+@media (max-width:520px){.touch{gap:6px}.pad{gap:4px;padding:4px}.touch button{font-size:16px;min-height:52px}.touch button small{font-size:9px;letter-spacing:0}.touch .pause,.touch .fsb{flex-basis:40px}}
 .touch[data-mode="online"] .pad::after{content:"";order:2}
 .touch[data-mode="online"] .pad button[data-k="l"]{order:0}.touch[data-mode="online"] .pad button[data-k="r"]{order:1}
 .touch[data-mode="online"] .pad button[data-k="u"]{order:3}.touch[data-mode="online"] .pad button[data-k="d"]{order:4}
@@ -385,8 +388,10 @@ function syncTouch(){
   if(touchEl.hidden)return;
   const mode=net.role?'online':'local';
   const role=p=>runner&&runner.pi===p&&state!=='title'?'run':crane&&crane.pi===p&&state!=='title'?'drop':'';
-  const r0=net.role?role(net.me):role(0),r1=role(1),sig=mode+r0+r1;
-  if(sig===touchSig)return;touchSig=sig;touchEl.dataset.mode=mode;
+  const ingame=['intro','play','pause'].includes(state);
+  const r0=net.role?role(net.me):role(0),r1=role(1),sig=mode+r0+r1+ingame;
+  if(sig===touchSig)return;touchSig=sig;touchEl.dataset.mode=mode;touchEl.classList.toggle('ingame',ingame);
+  if(!ingame){down.clear();touchEl.querySelectorAll('.on').forEach(b=>b.classList.remove('on'))}
   touchEl.querySelectorAll('.pad').forEach(pad=>{const r=+pad.dataset.p===0?r0:r1;
     pad.querySelector('[data-k="u"] small').textContent=r==='drop'?'switch':'jump';
     pad.querySelector('[data-k="d"] small').textContent=r==='drop'?'drop':'slide'});
