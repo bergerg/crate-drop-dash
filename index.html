@@ -126,7 +126,7 @@ body.fs .touch button{min-height:56px}
     </div>
   </div>
   <p class="note">Each player runs once. <b>Runner</b> earns 1000 + time bonus for finishing, or points for distance. <b>Dropper</b> earns 50 per hit. Boxes: <b>Crate</b> (fast reload), <b>Spring</b> (bounces the runner up, careful), <b>Iron</b> (long stun, slow reload). Jump against a wall to climb it. <kbd>Esc</kbd> pause · <kbd>M</kbd> sound · <kbd>F</kbd> full screen.</p>
-  <p class="note"><b>Solo:</b> set MODE to SOLO. The level never ends and the computer runs the crane, getting tougher every 40 m. You have 3 lives; save your distance to the online leaderboard.</p>
+  <p class="note"><b>Solo:</b> set MODE to SOLO. The level never ends and the computer runs the crane, getting 10% better every 100 m. You have 3 lives; save your distance to the online leaderboard.</p>
   <p class="note"><b>Online play:</b> set MODE to ONLINE. One player creates a room and reads out the 4-letter code, the other joins with it. Online, each player can use WASD or the arrow keys.</p>
 </div>
 
@@ -453,7 +453,7 @@ function startSolo(){
   timeLeft=0;cam.x=0;roundHits=0;state='intro';introT=3.2;lastTick=4;solo.best=loadBest();
 }
 const meters=()=>runner?Math.max(0,Math.floor((runner.best-CHECKS[0]*T)/T)):0;
-const aiLevel=()=>Math.min(12,Math.floor(meters()/40));
+const aiLevel=()=>Math.min(30,Math.floor(meters()/100));
 function loseLife(){
   if(!isSolo())return;lives--;
   if(lives<=0)setTimeout(()=>{if(isSolo()&&state==='play')endSolo()},700);
@@ -482,20 +482,20 @@ function dropBox(c){const k=BOXTYPES[c.type];
   boxes.push({id:++boxSeq,kind:k,x:Math.round(cam.x+c.sx-8),y:26,w:16,h:16,vy:40,landed:false,squash:0,fresh:true,age:0});
   c.kick=.15;SFX.drop();return k}
 function updateAI(dt){
-  const c=crane,r=runner,L=aiLevel();
+  const c=crane,r=runner,L=aiLevel(),m=1+.1*L; // m = skill: +10% every 100 m
   c.cd=Math.max(0,c.cd-dt);c.kick=Math.max(0,c.kick-dt);
   if(!c.plan){
-    const pool=['crate','crate','crate'];if(L>=2)pool.push('spring');if(L>=4)pool.push('iron','crate');if(L>=7)pool.push('iron');
+    const pool=['crate','crate','crate'];if(L>=2)pool.push('spring');if(L>=4)pool.push('iron','crate');if(L>=8)pool.push('iron');
     c.type=BOXTYPES.indexOf(pool[R(0,pool.length-1)]);
-    c.plan={err:(Math.random()*2-1)*Math.max(3,40-L*3.2),wait:Math.max(.12,1.1-L*.08)*(.6+Math.random()*.8)};
+    c.plan={err:(Math.random()*2-1)*36/m,wait:(1.5/m)*(.6+Math.random()*.8)};
   }
   const gm=BOX[BOXTYPES[c.type]].grav,dy=Math.max(8,r.y-42);
-  const tf=Math.sqrt(2*dy/(950*gm)),lead=Math.min(1.1,.15+L*.09);
+  const tf=Math.sqrt(2*dy/(950*gm)),lead=Math.min(1,.15*m);
   const target=r.x+r.w/2+r.vx*tf*lead+c.plan.err-cam.x;
-  const dx=target-c.sx,spd=55+L*14;
+  const dx=target-c.sx,spd=40*m;
   c.sx=clamp(c.sx+clamp(dx,-spd*dt,spd*dt),12,W-12);
   if(c.cd<=0&&r.inv<=0){c.plan.wait-=dt;
-    if(c.plan.wait<=0&&Math.abs(dx)<4){const k=dropBox(c);c.cd=BOX[k].cd*Math.max(.5,1.7-L*.1);c.plan=null}}
+    if(c.plan.wait<=0&&Math.abs(dx)<4){const k=dropBox(c);c.cd=BOX[k].cd*2.2/m;c.plan=null}}
 }
 function startRound(r){
   round=r;const run=r===0?0:1,drop=1-run;
@@ -540,6 +540,7 @@ function stunRunner(b){
   burst(r.x+5,r.y+2,['#ffd34e','#ffffff'],10,120,300,.5);
   pop(b.kind==='iron'?'CLANG!':'BONK!',r.x+5,r.y-8,PCOL[crane.pi].main);
 }
+const AIR_MAX=52; // sideways speed while jumping (walking top speed is 15)
 function updateRunner(dt){
   const r=runner,pi=r.pi;
   r.inv=Math.max(0,r.inv-dt);
@@ -558,14 +559,14 @@ function updateRunner(dt){
     if((r.slideT<=0||!r.ground||!ctrl))standUp(r);
     if(r.sliding&&Math.random()<.3)parts.push({x:r.x+(r.face>0?0:10),y:r.y+11,vx:-r.face*20,vy:-15,g:60,life:.25,c:'#efe1c0',s:1});
   }else{
-    const max=15,acc=r.ground?672:504;
+    const max=r.ground?15:AIR_MAX,acc=r.ground?672:504;
     if(ax){r.vx+=ax*acc*dt;if(Math.abs(r.vx)>max)r.vx=Math.sign(r.vx)*Math.max(max,Math.abs(r.vx)-400*dt)}
     else{const f=(r.ground?1000:180)*dt;r.vx=Math.abs(r.vx)<=f?0:r.vx-Math.sign(r.vx)*f}
   }
 
-  if(r.buffer>0&&r.sliding&&r.ground&&standUp(r)){r.vy=-330;r.ground=false;r.coyote=0;r.buffer=0;SFX.jump()}
+  if(r.buffer>0&&r.sliding&&r.ground&&standUp(r)){r.vy=-330;if(ax)r.vx=ax*AIR_MAX;r.ground=false;r.coyote=0;r.buffer=0;SFX.jump()}
   if(r.buffer>0&&!r.sliding){
-    if(r.ground||r.coyote>0){r.vy=-330;r.ground=false;r.coyote=0;r.buffer=0;SFX.jump();dust(r.x+5,r.y+20)}
+    if(r.ground||r.coyote>0){r.vy=-330;r.ground=false;r.coyote=0;r.buffer=0;if(ax)r.vx=ax*AIR_MAX;SFX.jump();dust(r.x+5,r.y+20)}
     else if(r.wall){r.vy=-310;r.vx=-r.wall*95;r.face=-r.wall;r.buffer=0;SFX.wall();burst(r.x+(r.wall>0?10:0),r.y+10,['#efe1c0'],4,40,100,.3)}
   }
 
@@ -824,7 +825,7 @@ function render(){
     txt('BEST '+Math.max(solo.best,meters())+' m',8,11.5,4,'#f3eedd');
     for(let i=0;i<3;i++)heart(8+i*11,4,i<lives);
     txt('CRANE LV '+(aiLevel()+1),W-6,3,6,PCOL[1].main,'right');
-    txt('gets tougher every 40 m',W-6,10.5,4,'#f3eedd','right');
+    txt('+10% skill every 100 m',W-6,10.5,4,'#f3eedd','right');
     if(state==='intro'){panel(70,52,180,76);txt('SOLO RUN',160,60,8,'#ffd34e','center');
       txt('Run as far as you can',160,76,6,PCOL[0].main,'center');txt('3 lives. Boxes and pits cost one.',160,86,5,'#f3eedd','center');
       txt(String(Math.max(1,Math.ceil(introT))),160,100,14,'#ffffff','center')}
