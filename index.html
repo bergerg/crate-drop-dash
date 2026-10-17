@@ -195,23 +195,27 @@ function drawRepeat(img,off,y){const w=img.width;let ox=-(((Math.floor(off)%w)+w
 
 /* ---------- level ---------- */
 const map=new Uint8Array(COLS*ROWS);
-let LC=94; // columns in the current level
-const solidTile=(tx,ty)=>{if(tx<0||tx>=LC)return true;if(ty<0||ty>=ROWS)return false;return map[ty*COLS+tx]>0};
-let CHECKS=[2],FINISH_X=(LC-8)*T;const ROUND_TIME=75;
+// Level size in tiles. Horizontal maps are LC wide x 11 tall; TOWER is 20 wide and very tall. Map stride = LC.
+let LC=94,MH=ROWS,VERT=false;
+const tileV=(tx,ty)=>{if(tx<0||tx>=LC)return 2;if(ty<0||ty>=MH)return 0;return map[ty*LC+tx]};
+const solidTile=(tx,ty)=>tileV(tx,ty)>0;
+// CHECKS: spawn/checkpoint spots {tx,ty} (ty = row the runner stands on). FINISH_P: progress needed to finish. FLAG: finish flag base.
+let CHECKS=[{tx:2,ty:9}],FINISH_X=(LC-8)*T,FINISH_P=FINISH_X,FLAG=null;const ROUND_TIME=75;
 const MAPS=[
   {name:'RANDOM',desc:'A bit of everything',segs:['flat','pit','pillar','tunnel','wall','stairs','planks']},
   {name:'MEADOW',desc:'Easy: no pits, no tall walls',segs:['flat','planks','stairs']},
   {name:'TUNNELS',desc:'Lots of sliding',segs:['tunnel','flat','planks','tunnel']},
   {name:'CLIMBER',desc:'Tall walls to wall-jump up',segs:['wall','stairs','flat','wall']},
-  {name:'PIT HOPPER',desc:'Gaps to jump over',segs:['pit','pillar','flat','pit']}
+  {name:'PIT HOPPER',desc:'Gaps to jump over',segs:['pit','pillar','flat','pit']},
+  {name:'TOWER',desc:'Climb up, platform to platform',vert:true}
 ];
-const LENGTHS=[{name:'SHORT',cols:60},{name:'MEDIUM',cols:94},{name:'LONG',cols:128}];
+const LENGTHS=[{name:'SHORT',cols:60,plats:22},{name:'MEDIUM',cols:94,plats:36},{name:'LONG',cols:128,plats:50}];
 let mapIdx=0,lenIdx=1,menuSel=0;
 const isSolo=()=>net.mode==='solo';
 /* Level: chained segments from the chosen map style. Solo mode keeps adding segments forever. */
 const R=(a,b)=>a+Math.floor(Math.random()*(b-a+1));
-const setT=(x,y,v)=>{if(x>=0&&x<LC&&y>=0&&y<ROWS)map[y*COLS+x]=v};
-const ground=(x0,x1,top=9)=>{for(let x=x0;x<=x1;x++)for(let y=top;y<ROWS;y++)setT(x,y,1)};
+const setT=(x,y,v)=>{if(x>=0&&x<LC&&y>=0&&y<MH)map[y*LC+x]=v};
+const ground=(x0,x1,top=9)=>{for(let x=x0;x<=x1;x++)for(let y=top;y<MH;y++)setT(x,y,1)};
 const block=(x0,x1,y0,y1,v)=>{for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)setT(x,y,v)};
 const SEG={
   flat:x=>{const w=R(3,5);ground(x,x+w-1);return w},
@@ -229,22 +233,52 @@ function nextSeg(){
 }
 const safeCol=c=>solidTile(c,9)&&solidTile(c+1,9)&&[5,6,7,8].every(y=>!solidTile(c,y)&&!solidTile(c+1,y));
 function extendLevel(toTx){
-  while(gen.x<toTx&&gen.x<COLS-24){
+  while(gen.x<toTx&&gen.x<LC-24){
     const start=gen.x;nextSeg();
-    const last=CHECKS[CHECKS.length-1];
-    if(gen.x-last>26)for(let c=Math.max(start,last+18);c<gen.x-1;c++)if(safeCol(c)){CHECKS.push(c);break}
+    const last=CHECKS[CHECKS.length-1].tx;
+    if(gen.x-last>26)for(let c=Math.max(start,last+18);c<gen.x-1;c++)if(safeCol(c)){CHECKS.push({tx:c,ty:9});break}
   }
-  if(gen.x>=COLS-24)ground(gen.x,COLS-1);
+  if(gen.x>=LC-24)ground(gen.x,LC-1);
+}
+/* TOWER: one-way plank platforms going up between two stone walls. Each new platform is
+   2-3 rows higher and overlaps or sits within one tile sideways of the last, so it is always reachable. */
+function nextPlat(){
+  const p=gen.p,rise=R(2,3),y=p.y-rise;gen.n++;
+  const wide=gen.n%10===0,w=wide?R(9,12):R(3,6);
+  let x=gen.dir>0?p.x+p.w+R(-3,1):p.x-w-R(-3,1);
+  if(x<1||x+w>LC-1){gen.dir=-gen.dir;x=clamp(x,1,LC-1-w)}
+  if(Math.random()<.2)gen.dir=-gen.dir;
+  block(x,x+w-1,y,y,3);gen.p={x,y,w};
+  if(wide)CHECKS.push({tx:x+1,ty:y});
+  return gen.p;
+}
+function extendTower(toRow){while(gen.p.y>toRow&&gen.p.y>8)nextPlat()}
+function buildTower(){
+  const solo=isSolo();LC=20;MH=solo?Math.floor(map.length/LC):LENGTHS[lenIdx].plats*3+14;
+  for(let y=0;y<MH;y++){setT(0,y,2);setT(LC-1,y,2)}
+  ground(1,LC-2,MH-2);
+  CHECKS=[{tx:3,ty:MH-2}];gen={p:{x:1,y:MH-2,w:LC-2},dir:1,n:0};
+  const spawnY=(MH-2)*T;
+  if(solo){FINISH_P=Infinity;FINISH_X=Infinity;FLAG=null;extendTower(MH-60);return}
+  for(let i=0;i<LENGTHS[lenIdx].plats;i++)nextPlat();
+  // final wide platform with the flag
+  const y=gen.p.y-R(2,3),x=4,w=12;block(x,x+w-1,y,y,3);
+  FINISH_P=spawnY-y*T;FINISH_X=Infinity;FLAG={x:(x+w-3)*T,y:y*T};
 }
 function buildLevel(){
-  map.fill(0);gen={x:6,bag:[]};CHECKS=[2];
-  if(isSolo()){LC=COLS;FINISH_X=Infinity;ground(0,5);extendLevel(70);return}
-  LC=LENGTHS[lenIdx].cols;const fin=LC-8;FINISH_X=fin*T;
+  map.fill(0);gen={x:6,bag:[]};CHECKS=[{tx:2,ty:9}];VERT=!!MAPS[mapIdx].vert;MH=ROWS;FLAG=null;
+  if(VERT){buildTower();return}
+  if(isSolo()){LC=COLS;FINISH_X=Infinity;FINISH_P=Infinity;ground(0,5);extendLevel(70);return}
+  LC=LENGTHS[lenIdx].cols;const fin=LC-8;FINISH_X=fin*T;FINISH_P=FINISH_X;FLAG={x:FINISH_X,y:9*T};
   ground(0,5);
   while(gen.x<=fin-19)nextSeg();
   ground(gen.x,LC-1);
-  [.25,.5,.75].forEach(f=>{let c=Math.round(fin*f);while(c<fin-6&&!safeCol(c))c++;if(c<fin-6&&c>CHECKS[CHECKS.length-1]+8)CHECKS.push(c)});
+  [.25,.5,.75].forEach(f=>{let c=Math.round(fin*f);while(c<fin-6&&!safeCol(c))c++;if(c<fin-6&&c>CHECKS[CHECKS.length-1].tx+8)CHECKS.push({tx:c,ty:9})});
 }
+// progress along the course: distance right, or height climbed in TOWER
+const spawnOf=cp=>({x:cp.tx*T+3,y:cp.ty*T-20});
+const progOf=(x,y)=>VERT?(CHECKS[0].ty*T-20)-y:x;
+const startP=()=>VERT?0:CHECKS[0].tx*T+3;
 
 /* ---------- audio ---------- */
 let ac=null,muted=false;
@@ -313,7 +347,7 @@ function onMsg(m){
   }else{
     if(m.k==='full'){netError('That room already has 2 players.');return}
     if(m.k==='welcome'){net.peer=true;net.status='Joined! Waiting for the host...';return}
-    if(m.k==='start'){net.peer=true;map.fill(0);LC=m.lc;for(let y=0;y<ROWS;y++)for(let x=0;x<LC;x++)map[y*COLS+x]=+m.map[y*LC+x]||0;FINISH_X=(LC-8)*T;CHECKS=m.ch;net.gotMap=true;boxes=[];parts=[];return}
+    if(m.k==='start'){net.peer=true;map.fill(0);LC=m.lc;MH=m.mh;VERT=!!m.v;for(let i=0;i<LC*MH;i++)map[i]=+m.map[i]||0;FINISH_X=m.fx===null?Infinity:m.fx;FINISH_P=m.fp;FLAG=m.fl;CHECKS=m.ch;net.gotMap=true;boxes=[];parts=[];return}
     if(m.k==='s'&&net.gotMap)applySnap(m);
   }
 }
@@ -437,12 +471,12 @@ const pauseKey=()=>pressed.has('Escape')||pressed.has('KeyP')||(net.role==='host
 const quitKey=()=>pressed.has('KeyQ')||(net.role==='host'&&net.rtap.has('q'));
 
 /* ---------- state ---------- */
-let state='title',round=0,scores=[0,0],runner=null,crane=null,boxes=[],parts=[],pops=[],cam={x:0},
+let state='title',round=0,scores=[0,0],runner=null,crane=null,boxes=[],parts=[],pops=[],cam={x:0,y:0},
     timeLeft=ROUND_TIME,introT=0,goT=0,endT=0,shake=0,time=0,roundHits=0,last=null,lastTick=4;
 
-function newRunner(pi){return{pi,x:CHECKS[0]*T+3,y:9*T-20,w:10,h:20,vx:0,vy:0,face:1,ground:false,coyote:0,buffer:0,slideT:0,sliding:false,stun:0,inv:0,wall:0,anim:0,check:0,best:0}}
+function newRunner(pi){const sp=spawnOf(CHECKS[0]);return{pi,x:sp.x,y:sp.y,w:10,h:20,vx:0,vy:0,face:1,ground:false,coyote:0,buffer:0,slideT:0,sliding:false,stun:0,inv:0,wall:0,anim:0,check:0,best:0}}
 function toMenu(){if(net.role)leaveRoom();state='title';runner=null;crane=null;boxes=[];parts=[];pops=[];buildLevel()}
-function newGame(){if(isSolo()){startSolo();return}scores=[0,0];buildLevel();if(net.role==='host'){let m='';for(let y=0;y<ROWS;y++)for(let x=0;x<LC;x++)m+=map[y*COLS+x];send({k:'start',map:m,lc:LC,ch:CHECKS})};startRound(0)}
+function newGame(){if(isSolo()){startSolo();return}scores=[0,0];buildLevel();if(net.role==='host'){let m='';for(let i=0;i<LC*MH;i++)m+=map[i];send({k:'start',map:m,lc:LC,mh:MH,v:VERT,ch:CHECKS,fx:FINISH_X,fp:FINISH_P,fl:FLAG})};startRound(0)}
 let lives=3;
 const solo={phase:'board',dist:0,best:0,top:null,myId:null,msg:'',lvl:0};
 function loadBest(){try{return +localStorage.getItem('cdd-best')||0}catch(e){return 0}}
@@ -450,9 +484,9 @@ function startSolo(){
   buildLevel();round=0;scores=[0,0];
   boxes=[];parts=[];pops=[];runner=newRunner(0);lives=3;
   crane={pi:1,sx:W/2+40,type:0,cd:3,kick:0,plan:null,ai:true};
-  timeLeft=0;cam.x=0;roundHits=0;state='intro';introT=3.2;lastTick=4;solo.best=loadBest();
+  timeLeft=0;cam.x=0;cam.y=VERT?MH*T-H:0;roundHits=0;state='intro';introT=3.2;lastTick=4;solo.best=loadBest();
 }
-const meters=()=>runner?Math.max(0,Math.floor((runner.best-CHECKS[0]*T)/T)):0;
+const meters=()=>runner?Math.max(0,Math.floor((runner.best-startP())/T)):0;
 const aiLevel=()=>Math.min(30,Math.floor(meters()/100));
 function loseLife(){
   if(!isSolo())return;lives--;
@@ -479,7 +513,7 @@ async function submitName(){
 }
 /* computer crane: aims better, moves faster and reloads quicker the further you run */
 function dropBox(c){const k=BOXTYPES[c.type];
-  boxes.push({id:++boxSeq,kind:k,x:Math.round(cam.x+c.sx-8),y:26,w:16,h:16,vy:40,landed:false,squash:0,fresh:true,age:0});
+  boxes.push({id:++boxSeq,kind:k,x:Math.round(cam.x+c.sx-8),y:Math.round(cam.y)+26,w:16,h:16,vy:40,landed:false,squash:0,fresh:true,age:0});
   c.kick=.15;SFX.drop();return k}
 function updateAI(dt){
   const c=crane,r=runner,L=aiLevel(),m=1+.1*L; // m = skill: +10% every 100 m
@@ -489,7 +523,7 @@ function updateAI(dt){
     c.type=BOXTYPES.indexOf(pool[R(0,pool.length-1)]);
     c.plan={err:(Math.random()*2-1)*60/m,wait:(2/m)*(.6+Math.random()*.8)};
   }
-  const gm=BOX[BOXTYPES[c.type]].grav,dy=Math.max(8,r.y-42);
+  const gm=BOX[BOXTYPES[c.type]].grav,dy=Math.max(8,r.y-cam.y-42);
   const tf=Math.sqrt(2*dy/(950*gm)),lead=Math.min(1,.1*L);
   const target=r.x+r.w/2+r.vx*tf*lead+c.plan.err-cam.x;
   const dx=target-c.sx,spd=40*m;
@@ -501,15 +535,17 @@ function startRound(r){
   round=r;const run=r===0?0:1,drop=1-run;
   boxes=[];parts=[];pops=[];runner=newRunner(run);
   crane={pi:drop,sx:W/2+40,type:0,cd:0,kick:0};
-  timeLeft=ROUND_TIME;cam.x=0;roundHits=0;state='intro';introT=3.2;lastTick=4;
+  timeLeft=ROUND_TIME;cam.x=0;cam.y=VERT?MH*T-H:0;roundHits=0;state='intro';introT=3.2;lastTick=4;
 }
 
 /* ---------- physics helpers ---------- */
 const aabb=(a,b)=>a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;
-function overlaps(e){
+// pb = the mover's bottom edge before this step; planks (type 3) only count when landing on them from above
+function overlaps(e,pb){
   const res=[];
   const x0=Math.floor(e.x/T),x1=Math.floor((e.x+e.w-.001)/T),y0=Math.floor(e.y/T),y1=Math.floor((e.y+e.h-.001)/T);
-  for(let ty=y0;ty<=y1;ty++)for(let tx=x0;tx<=x1;tx++)if(solidTile(tx,ty))res.push({x:tx*T,y:ty*T,w:T,h:T});
+  for(let ty=y0;ty<=y1;ty++)for(let tx=x0;tx<=x1;tx++){const v=tileV(tx,ty);if(!v)continue;
+    if(v===3&&(pb===undefined||pb>ty*T+.01))continue;res.push({x:tx*T,y:ty*T,w:T,h:T})}
   for(const b of boxes)if(b.landed&&b!==e&&aabb(e,b))res.push(b);
   return res;
 }
@@ -526,8 +562,8 @@ function addShake(v){if(!reduceMotion)shake=Math.max(shake,v);if(net.role==='hos
 /* ---------- runner ---------- */
 function standUp(r){if(r.sliding&&canStand(r)){r.sliding=false;r.y-=8;r.h=20;return true}return !r.sliding}
 function respawn(r){
-  const cx=CHECKS[r.check]*T+3;
-  const spot={x:cx,y:9*T-20,w:10,h:20};
+  const sp=spawnOf(CHECKS[r.check]),cx=sp.x;
+  const spot={x:cx,y:sp.y,w:10,h:20};
   for(const b of boxes.slice())if(b.landed&&aabb({x:spot.x-8,y:spot.y-40,w:26,h:60},b))removeBox(b);
   Object.assign(r,{x:cx,y:spot.y,vx:0,vy:0,sliding:false,h:20,stun:0,inv:1.3,face:1});
   SFX.fall();pop('OOPS!',cx+5,spot.y-6,'#ffffff');loseLife();
@@ -581,9 +617,9 @@ function updateRunner(dt){
     if(s.kind&&r.sliding){removeBox(s);SFX.smash();addShake(.12);pop('SMASH!',s.x+8,s.y-4,'#ffffff');continue}
     if(r.vx>0)r.x=s.x-r.w;else if(r.vx<0)r.x=s.x+s.w;r.vx=0}
   // move Y
-  const wasAir=!r.ground,vyIn=r.vy;
+  const wasAir=!r.ground,vyIn=r.vy,pb=r.y+r.h;
   r.y+=r.vy*dt;r.ground=false;
-  for(const s of overlaps(r)){if(!aabb(r,s))continue;
+  for(const s of overlaps(r,r.vy>0?pb:undefined)){if(!aabb(r,s))continue;
     if(r.vy>0){r.y=s.y-r.h;
       if(s.kind==='spring'&&!r.sliding){r.vy=-520;s.squash=.2;SFX.spring();burst(r.x+5,r.y+20,['#ffd34e','#ffffff'],6,60,200,.3)}
       else{if(wasAir&&vyIn>220)dust(r.x+5,r.y+r.h);r.vy=0;r.ground=true}}
@@ -593,10 +629,11 @@ function updateRunner(dt){
   if(!r.ground){if(blocked({x:r.x-1,y:r.y+3,w:1,h:r.h-6}))r.wall=-1;else if(blocked({x:r.x+r.w,y:r.y+3,w:1,h:r.h-6}))r.wall=1}
 
   r.anim+=dt*Math.abs(r.vx)/14;
-  if(r.y>H+24){respawn(r);return}
-  r.best=Math.max(r.best,r.x);
-  if(r.ground&&r.check<CHECKS.length-1&&r.x>=CHECKS[r.check+1]*T){r.check++;SFX.check();pop('CHECKPOINT',CHECKS[r.check]*T+3,9*T-44,'#7bd35a')}
-  if(r.x+r.w>=FINISH_X)endRound(true);
+  if(r.y>(VERT?MH*T:H)+24){respawn(r);return}
+  const pr=progOf(r.x,r.y);r.best=Math.max(r.best,pr);
+  const nx=CHECKS[r.check+1];
+  if(nx&&r.ground&&(VERT?r.y+r.h<=nx.ty*T+1:r.x>=nx.tx*T)){r.check++;SFX.check();pop('CHECKPOINT',nx.tx*T+3,nx.ty*T-44,'#7bd35a')}
+  if(VERT?(r.ground&&pr>=FINISH_P-2):r.x+r.w>=FINISH_X)endRound(true);
 }
 
 /* ---------- crane + boxes ---------- */
@@ -611,37 +648,38 @@ function updateBoxes(dt){
   for(let i=boxes.length-1;i>=0;i--){const b=boxes[i];
     if(b.squash>0)b.squash-=dt;
     if(b.landed){b.age+=dt;if(b.age>=11)removeBox(b);continue}
-    const gm=BOX[b.kind].grav;
+    const gm=BOX[b.kind].grav,pb=b.y+b.h;
     b.vy=Math.min(b.vy+950*gm*dt,420*gm);b.y+=b.vy*dt;
     if(runner&&aabb(b,runner)){if(b.fresh&&runner.inv<=0)stunRunner(b);boxes.splice(i,1);burst(b.x+8,b.y+8,BOX[b.kind].cols,12,100,500,.5);continue}
     let landed=false;
-    for(const s of overlaps(b)){if(!aabb(b,s))continue;b.y=s.y-b.h;landed=true}
+    for(const s of overlaps(b,pb)){if(!aabb(b,s))continue;b.y=s.y-b.h;landed=true}
     if(landed){
       if(b.vy>150){dust(b.x+3,b.y+16);dust(b.x+13,b.y+16);SFX.thud();if(b.kind==='iron')addShake(.15)}
       b.landed=true;b.vy=0;b.fresh=false;
       if(runner&&aabb(b,runner)){boxes.splice(i,1);continue}
     }
-    if(b.y>H+40)boxes.splice(i,1);
+    if(b.y>cam.y+H+40)boxes.splice(i,1);
   }
+  if(VERT)for(let i=boxes.length-1;i>=0;i--)if(boxes[i].landed&&boxes[i].y>cam.y+H+120)boxes.splice(i,1);
   const landed=boxes.filter(b=>b.landed);
   if(landed.length>36)removeBox(landed[0]);
 }
 function dropTarget(){
   const bx=cam.x+crane.sx-8;
-  for(let y=42;y<H;y+=2)if(blocked({x:bx,y,w:16,h:16}))return y;
-  return H+10;
+  for(let y=cam.y+42;y<cam.y+H;y+=2)if(overlaps({x:bx,y,w:16,h:16},y+14).length)return y;
+  return cam.y+H+10;
 }
 
 /* ---------- round flow ---------- */
 let result=null;
 function endRound(finished){
-  const r=runner,prog=clamp(r.best/FINISH_X,0,1);
+  const r=runner,prog=clamp((r.best-startP())/(FINISH_P-startP()),0,1);
   const runPts=finished?1000+Math.round(timeLeft*20):Math.round(prog*600);
   const dropPts=roundHits*50;
   scores[r.pi]+=runPts;scores[crane.pi]+=dropPts;
   result={finished,runPts,dropPts,time:ROUND_TIME-timeLeft,hits:roundHits,runner:r.pi,dropper:crane.pi,prog};
   state='roundEnd';endT=0;
-  if(finished){SFX.win();burst(FINISH_X,100,['#ffd34e','#ff8a3d','#3ec9c0','#ffffff','#e0485a'],40,180,250,1.2)}else SFX.lose();
+  if(finished){SFX.win();if(FLAG)burst(FLAG.x,FLAG.y-44,['#ffd34e','#ff8a3d','#3ec9c0','#ffffff','#e0485a'],40,180,250,1.2)}else SFX.lose();
 }
 
 /* ---------- update ---------- */
@@ -652,6 +690,8 @@ function updateParts(dt){
 }
 function updateCam(dt){
   if(!runner)return;
+  if(VERT){cam.x=0;const ty=runner.y-H*.5;cam.y+=(ty-cam.y)*Math.min(1,dt*4);cam.y=clamp(cam.y,0,MH*T-H);return}
+  cam.y=0;
   const tx=runner.x+runner.w/2-W/2+runner.face*24;
   cam.x+=(tx-cam.x)*Math.min(1,dt*5);cam.x=clamp(cam.x,0,LC*T-W);
 }
@@ -663,7 +703,8 @@ function update(dt){
     case'join':{if(pressed.has('Escape')){state='title';break}if(pressed.has('Enter'))tryJoin();break}
     case'lobby':{updateParts(dt);if(pressed.has('Escape'))toMenu();if(net.role==='guest')guestUpdate(dt);break}
     case'netmsg':{if(go()||pressed.has('Escape'))toMenu();break}
-    case'title':{const span=(isSolo()?gen.x:LC)*T-W,p=(time*25)%(2*span);cam.x=p<span?p:2*span-p;updateParts(dt);
+    case'title':{if(VERT){cam.x=0;const top=isSolo()?gen.p.y*T-40:0,bot=MH*T-H,span=Math.max(1,bot-top),p=(time*25)%(2*span);cam.y=bot-(p<span?p:2*span-p)}
+      else{cam.y=0;const span=(isSolo()?gen.x:LC)*T-W,p=(time*25)%(2*span);cam.x=p<span?p:2*span-p}updateParts(dt);
       const has=(...k)=>k.some(c=>pressed.has(c));
       const n=menuRows();
       if(has('KeyW','ArrowUp')){menuSel=(menuSel+n-1)%n;SFX.sel()}
@@ -676,7 +717,7 @@ function update(dt){
       if(introT<=0){state='play';goT=.8;SFX.go()}break}
     case'play':{if(pauseKey()){state='pause';break}
       goT=Math.max(0,goT-dt);
-      if(isSolo()){extendLevel(Math.floor(runner.x/T)+40);updateAI(dt)}
+      if(isSolo()){if(VERT)extendTower(Math.floor(runner.y/T)-30);else extendLevel(Math.floor(runner.x/T)+40);updateAI(dt)}
       else{timeLeft-=dt;if(timeLeft<=0){timeLeft=0;endRound(false);break}updateCrane(dt)}
       updateRunner(dt);if(state!=='play')break;updateBoxes(dt);updateParts(dt);updateCam(dt);break}
     case'pause':{if(quitKey()){toMenu();break}if(pauseKey()||go())state='play';break}
@@ -699,28 +740,30 @@ function drawRunner(r){
 }
 function drawWorld(){
   g.drawImage(SKY,0,0);
-  drawRepeat(CLOUDS,cam.x*.12+time*4,6);
-  drawRepeat(HILLS,cam.x*.3,0);
-  drawRepeat(HILLS2,cam.x*.55,0);
-  const cx=Math.floor(cam.x);
+  const up=VERT?Math.max(0,MH*T-H-cam.y):0;
+  drawRepeat(CLOUDS,cam.x*.12+time*4,VERT?(((6+up*.08)%150)+150)%150-40:6);
+  drawRepeat(HILLS,cam.x*.3,Math.min(H,up*.12));
+  drawRepeat(HILLS2,cam.x*.55,Math.min(H,up*.25));
+  const cx=Math.floor(cam.x),cy=Math.floor(cam.y);
   const sx=shake>0?Math.round((Math.random()-.5)*4):0,sy=shake>0?Math.round((Math.random()-.5)*4):0;
-  g.save();g.translate(-cx+sx,sy);
+  g.save();g.translate(-cx+sx,-cy+sy);
   const t0=Math.floor(cx/T),t1=Math.min(LC-1,t0+W/T+1);
-  for(let ty=0;ty<ROWS;ty++)for(let tx=t0;tx<=t1;tx++){const v=map[ty*COLS+tx];if(!v)continue;
-    const tex=v===1?((ty===0||!map[(ty-1)*COLS+tx])?TEX.grass:TEX.dirt):v===2?TEX.stone:TEX.plank;g.drawImage(tex,tx*T,ty*T)}
+  const y0=Math.max(0,Math.floor(cy/T)),y1=Math.min(MH-1,y0+Math.ceil(H/T)+1);
+  for(let ty=y0;ty<=y1;ty++)for(let tx=t0;tx<=t1;tx++){const v=map[ty*LC+tx];if(!v)continue;
+    const tex=v===1?((ty===0||!map[(ty-1)*LC+tx])?TEX.grass:TEX.dirt):v===2?TEX.stone:TEX.plank;g.drawImage(tex,tx*T,ty*T)}
   // checkpoints
-  for(let i=1;i<CHECKS.length;i++){const x=CHECKS[i]*T+2,base=9*T,on=runner&&runner.check>=i;if(x<cx-16||x>cx+W+16)continue;
+  for(let i=1;i<CHECKS.length;i++){const x=CHECKS[i].tx*T+2,base=CHECKS[i].ty*T,on=runner&&runner.check>=i;if(x<cx-16||x>cx+W+16||base<cy-8||base>cy+H+30)continue;
     g.fillStyle='#4a4766';g.fillRect(x,base-22,1,22);g.fillStyle=on?'#7bd35a':'#f3eedd';g.fillRect(x+1,base-22,7,5);g.fillStyle=on?'#4fa83d':'#c9c3dd';g.fillRect(x+1,base-18,7,1)}
   // finish flag
-  if(isFinite(FINISH_X)){const x=FINISH_X,base=9*T;g.fillStyle='#4a4766';g.fillRect(x,base-46,2,46);g.fillStyle='#ffd34e';g.fillRect(x-1,base-48,4,3);
+  if(FLAG){const x=FLAG.x,base=FLAG.y;g.fillStyle='#4a4766';g.fillRect(x,base-46,2,46);g.fillStyle='#ffd34e';g.fillRect(x-1,base-48,4,3);
     const wave=Math.round(Math.sin(time*6));for(let i=0;i<5;i++)for(let j=0;j<3;j++){g.fillStyle=(i+j)%2?'#231a36':'#ffffff';g.fillRect(x+2+i*3,base-45+j*3+(i>2?wave:0),3,3)}}
   // boxes
   for(const b of boxes){if(b.age>8.5&&Math.floor(time*(b.age>10?16:8))%2)continue;if(b.kind==='spring'&&b.squash>0)g.drawImage(TEX.spring,Math.round(b.x),Math.round(b.y)+3,16,13);else g.drawImage(TEX[b.kind],Math.round(b.x),Math.round(b.y))}
   // drop guide
   if(crane&&(state==='play'||state==='intro')&&crane.cd<=0){
     const ty=dropTarget(),gx=Math.round(cam.x+crane.sx);g.fillStyle=PCOL[crane.pi].main;
-    for(let y=44;y<ty;y+=5)g.fillRect(gx,y,1,2);
-    if(ty<H){g.fillRect(gx-8,ty+14,3,1);g.fillRect(gx+6,ty+14,3,1);g.fillRect(gx-8,ty+12,1,2);g.fillRect(gx+8,ty+12,1,2)}
+    for(let y=cy+44;y<ty;y+=5)g.fillRect(gx,y,1,2);
+    if(ty<cy+H){g.fillRect(gx-8,ty+14,3,1);g.fillRect(gx+6,ty+14,3,1);g.fillRect(gx-8,ty+12,1,2);g.fillRect(gx+8,ty+12,1,2)}
   }
   if(runner&&state!=='title')drawRunner(runner);
   for(const p of parts){g.fillStyle=p.c;g.fillRect(Math.round(p.x),Math.round(p.y),p.s,p.s)}
@@ -744,9 +787,10 @@ function drawProgress(){
   const x0=60,x1=260,y=H-7;
   g.fillStyle='rgba(20,18,43,.7)';g.fillRect(x0-4,y-3,x1-x0+8,8);
   g.fillStyle='#4a4766';g.fillRect(x0,y,x1-x0,2);
-  for(let i=1;i<CHECKS.length;i++){const cx=x0+Math.round((CHECKS[i]*T/FINISH_X)*(x1-x0));g.fillStyle=runner.check>=i?'#7bd35a':'#c9c3dd';g.fillRect(cx,y-1,1,4)}
+  const fr=p=>clamp((p-startP())/(FINISH_P-startP()),0,1);
+  for(let i=1;i<CHECKS.length;i++){const sp=spawnOf(CHECKS[i]),cx=x0+Math.round(fr(progOf(sp.x,sp.y))*(x1-x0));g.fillStyle=runner.check>=i?'#7bd35a':'#c9c3dd';g.fillRect(cx,y-1,1,4)}
   g.fillStyle='#ffd34e';g.fillRect(x1,y-2,2,6);
-  const px=x0+Math.round(clamp(runner.x/FINISH_X,0,1)*(x1-x0));g.fillStyle=PCOL[runner.pi].main;g.fillRect(px-2,y-2,4,6);
+  const px=x0+Math.round(fr(progOf(runner.x,runner.y))*(x1-x0));g.fillStyle=PCOL[runner.pi].main;g.fillRect(px-2,y-2,4,6);
 }
 
 /* text on the big canvas so it stays crisp */
@@ -762,10 +806,10 @@ function heart(x,y,full){HEART.forEach((row,j)=>{for(let i=0;i<7;i++)if(row[i]==
 function render(){
   drawWorld();
   if(state!=='title'&&crane)drawCrane();
-  if(runner&&state!=='title'&&isFinite(FINISH_X))drawProgress();
+  if(runner&&state!=='title'&&isFinite(FINISH_P))drawProgress();
   ctx.drawImage(buf,0,0,W*S,H*S);
 
-  for(const p of pops){const a=1-p.t;ctx.globalAlpha=Math.max(0,a);txt(p.text,p.x-cam.x,p.y-p.t*14,6,p.col,'center');ctx.globalAlpha=1}
+  for(const p of pops){const a=1-p.t;ctx.globalAlpha=Math.max(0,a);txt(p.text,p.x-cam.x,p.y-cam.y-p.t*14,6,p.col,'center');ctx.globalAlpha=1}
 
   if(state==='title'){
     panel(18,6,284,168);
@@ -779,13 +823,18 @@ function render(){
     txt(MAPS[mapIdx].desc,230,MENU_Y[1]+9,4,'#aaa4cb','center');
     (online?['CREATE ROOM','JOIN ROOM']:['START']).forEach((a,j)=>{const i=3+j,y=MENU_Y[i],on=menuSel===i;
       txt((on?'> ':'  ')+a,40,y,7,on?'#ffd34e':'#f3eedd');if(on&&blink())txt('ENTER OR CLICK',230,y+1,6,'#ffffff','center')});
-    const mcols=Math.min(LC,128),mw=mcols*2,mx=160-mw/2,my=118;
+    const mcols=VERT?Math.min(MH,128):Math.min(LC,128),mw=mcols*2,mx=160-mw/2,my=118;
     ctx.fillStyle='#6cc4f5';ctx.fillRect(mx*S,my*S,mw*S,ROWS*2*S);
     const cols={1:'#7a4f33',2:'#6b6f8f',3:'#b97a40'};
-    for(let ty=0;ty<ROWS;ty++)for(let tx=0;tx<mcols;tx++){const v=map[ty*COLS+tx];if(!v)continue;
-      ctx.fillStyle=(v===1&&(ty===0||!map[(ty-1)*COLS+tx]))?'#4fa83d':cols[v];ctx.fillRect((mx+tx*2)*S,(my+ty*2)*S,2*S,2*S)}
-    CHECKS.slice(1).forEach(c=>{if(c<mcols){ctx.fillStyle='#f3eedd';ctx.fillRect((mx+c*2)*S,(my+12)*S,S,6*S)}});
-    if(isSolo())txt('... and on forever',mx+mw-2,my+24,4,'#c9c3dd','right');else{ctx.fillStyle='#ffd34e';ctx.fillRect((mx+(LC-8)*2)*S,(my+6)*S,2*S,12*S)}
+    if(VERT){ // tower drawn on its side: bottom of the tower on the left
+      for(let c=0;c<mcols;c++){const ty=MH-1-c;for(let tx=0;tx<LC;tx++){const v=map[ty*LC+tx];if(!v)continue;ctx.fillStyle=cols[v];ctx.fillRect((mx+c*2)*S,(my+tx*1.1)*S,2*S,Math.ceil(1.1*S))}}
+      txt(isSolo()?'... and up forever':'climb this way  >',mx+mw-2,my+24,4,'#c9c3dd','right');
+    }else{
+      for(let ty=0;ty<ROWS;ty++)for(let tx=0;tx<mcols;tx++){const v=map[ty*LC+tx];if(!v)continue;
+        ctx.fillStyle=(v===1&&(ty===0||!map[(ty-1)*LC+tx]))?'#4fa83d':cols[v];ctx.fillRect((mx+tx*2)*S,(my+ty*2)*S,2*S,2*S)}
+      CHECKS.slice(1).forEach(c=>{if(c.tx<mcols){ctx.fillStyle='#f3eedd';ctx.fillRect((mx+c.tx*2)*S,(my+12)*S,S,6*S)}});
+      if(isSolo())txt('... and on forever',mx+mw-2,my+24,4,'#c9c3dd','right');else{ctx.fillStyle='#ffd34e';ctx.fillRect((mx+(LC-8)*2)*S,(my+6)*S,2*S,12*S)}
+    }
     txt(isTouch?'Tap < > to change an option, tap a button to start':'Click < > to change, or use W S A D / arrow keys. Enter starts.',160,146,4,'#c9c3dd','center');
     txt(online?'The room creator picks the map and length':isTouch?'On one phone: P1 uses the left pad, P2 the right':'Click the game first if keys do nothing',160,156,4,'#aaa4cb','center');
     return;
@@ -822,12 +871,12 @@ function render(){
 
   if(isSolo()&&state!=='soloOver'){
     txt(meters()+' m',160,2,10,'#ffffff','center');
-    txt('BEST '+Math.max(solo.best,meters())+' m',8,11.5,4,'#f3eedd');
+    txt((VERT?'HEIGHT BEST ':'BEST ')+Math.max(solo.best,meters())+' m',8,11.5,4,'#f3eedd');
     for(let i=0;i<3;i++)heart(8+i*11,4,i<lives);
     txt('CRANE LV '+(aiLevel()+1),W-6,3,6,PCOL[1].main,'right');
     txt('+10% skill every 100 m',W-6,10.5,4,'#f3eedd','right');
     if(state==='intro'){panel(70,52,180,76);txt('SOLO RUN',160,60,8,'#ffd34e','center');
-      txt('Run as far as you can',160,76,6,PCOL[0].main,'center');txt('3 lives. Boxes and pits cost one.',160,86,5,'#f3eedd','center');
+      txt(VERT?'Climb as high as you can':'Run as far as you can',160,76,6,PCOL[0].main,'center');txt('3 lives. Boxes and pits cost one.',160,86,5,'#f3eedd','center');
       txt(String(Math.max(1,Math.ceil(introT))),160,100,14,'#ffffff','center')}
     if(state==='play'&&goT>0)txt('GO!',160,70,20,'#ffd34e','center');
     if(state==='pause'){panel(90,62,140,48);txt('PAUSED',160,72,10,'#ffd34e','center');txt('Enter or Esc to resume',160,90,5,'#f3eedd','center');txt('Q to quit to menu',160,99,5,'#aaa4cb','center')}
@@ -837,7 +886,7 @@ function render(){
   if(state==='soloOver'){
     panel(40,10,240,160);
     txt('GAME OVER',160,16,10,'#ff5b6b','center');
-    txt('You ran '+solo.dist+' m',160,31,7,'#ffffff','center');
+    txt((VERT?'You climbed ':'You ran ')+solo.dist+' m',160,31,7,'#ffffff','center');
     txt('Your best: '+solo.best+' m   ·   crane reached LV '+(solo.lvl+1),160,42,4.5,'#c9c3dd','center');
     if(solo.phase==='name'||solo.phase==='saving'){
       txt(solo.phase==='saving'?'Saving...':'Add your score to the leaderboard',160,58,5.5,'#ffd34e','center');
