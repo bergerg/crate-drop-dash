@@ -43,6 +43,11 @@ kbd{font-family:var(--display);font-size:12px;background:#0f0e22;border:1px soli
 .screen{position:relative}
 #code{position:absolute;left:35%;top:44%;width:31%;height:13%;opacity:0;font-size:16px;border:0;padding:0;background:transparent;color:transparent;caret-color:transparent}
 #code[hidden]{display:none}
+.namebox{position:absolute;left:50%;top:40%;transform:translateX(-50%);width:min(88%,440px);display:flex;gap:8px}
+.namebox[hidden]{display:none}
+.namebox input{flex:1;min-width:0;font-family:var(--display);font-size:16px;padding:8px 10px;border-radius:6px;border:2px solid var(--gold);background:#0f0e22;color:var(--fg)}
+.namebox button{font-family:var(--display);font-size:14px;padding:8px 12px;border-radius:6px;border:2px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer}
+.namebox button[type=submit]{background:var(--gold);color:#15132b;border-color:var(--gold)}
 .touch{display:flex;gap:10px;align-items:stretch;user-select:none;-webkit-user-select:none}
 .touch[hidden]{display:none}
 .pad{flex:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;padding:6px;border:2px solid var(--pc,var(--line));border-radius:8px;background:var(--panel);min-width:0}
@@ -54,7 +59,7 @@ kbd{font-family:var(--display);font-size:12px;background:#0f0e22;border:1px soli
 .touch .pause{flex:0 0 52px;--pc:var(--gold)}
 .touch[data-mode="online"] .pad[data-p="1"]{display:none}
 .touch[data-mode="online"] .pad{grid-template-columns:repeat(2,minmax(0,1fr)) 2fr repeat(2,minmax(0,1fr))}
-.touch:not(.ingame) .pad,.touch:not(.ingame) .pause{display:none!important}
+.touch:not(.ingame) .pad,.touch:not(.ingame):not(.over) .pause{display:none!important}
 .touch:not(.ingame){justify-content:flex-end}
 @media (max-width:520px){.touch{gap:6px}.pad{gap:4px;padding:4px}.touch button{font-size:16px;min-height:52px}.touch button small{font-size:9px;letter-spacing:0}.touch .pause,.touch .fsb{flex-basis:40px}}
 .touch[data-mode="online"] .pad::after{content:"";order:2}
@@ -90,6 +95,7 @@ body.fs .touch button{min-height:56px}
     <div class="hdr-right"><div class="tag">2 players · keyboard, phone or online</div><button class="hdrbtn" data-fs type="button">Full screen</button></div>
   </header>
   <div class="screen"><canvas id="game" tabindex="0" aria-label="Crate Drop Dash game screen. Click, then press Enter to start."></canvas>
+    <form class="namebox" id="nameBox" hidden><input id="nameIn" maxlength="12" placeholder="Your name" autocomplete="nickname" enterkeyhint="done" aria-label="Your name"><button type="submit">Save</button><button type="button" id="nameSkip">Skip</button></form>
     <input id="code" maxlength="4" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" aria-label="Room code" hidden></div>
   <p class="rotate">Turn your phone sideways, then tap ⛶ for full screen</p>
   <p class="fstip" id="fstip" hidden>Your browser can't go full screen here. On iPhone: tap <b>Share</b>, then <b>Add to Home Screen</b>, and open the game from the new icon. It opens full screen.</p>
@@ -120,6 +126,7 @@ body.fs .touch button{min-height:56px}
     </div>
   </div>
   <p class="note">Each player runs once. <b>Runner</b> earns 1000 + time bonus for finishing, or points for distance. <b>Dropper</b> earns 50 per hit. Boxes: <b>Crate</b> (fast reload), <b>Spring</b> (bounces the runner up, careful), <b>Iron</b> (long stun, slow reload). Jump against a wall to climb it. <kbd>Esc</kbd> pause · <kbd>M</kbd> sound · <kbd>F</kbd> full screen.</p>
+  <p class="note"><b>Solo:</b> set MODE to SOLO. The level never ends and the computer runs the crane, getting tougher every 40 m. You have 3 lives; save your distance to the online leaderboard.</p>
   <p class="note"><b>Online play:</b> set MODE to ONLINE. One player creates a room and reads out the 4-letter code, the other joins with it. Online, each player can use WASD or the arrow keys.</p>
 </div>
 
@@ -127,7 +134,7 @@ body.fs .touch button{min-height:56px}
 <script>
 (()=>{
 const cv=document.getElementById('game'), ctx=cv.getContext('2d');
-const S=3,W=320,H=180,T=16,ROWS=11,COLS=128;
+const S=3,W=320,H=180,T=16,ROWS=11,COLS=8192;
 cv.width=W*S; cv.height=H*S;
 const buf=document.createElement('canvas'); buf.width=W; buf.height=H;
 const g=buf.getContext('2d');
@@ -200,34 +207,44 @@ const MAPS=[
 ];
 const LENGTHS=[{name:'SHORT',cols:60},{name:'MEDIUM',cols:94},{name:'LONG',cols:128}];
 let mapIdx=0,lenIdx=1,menuSel=0;
-/* Level: chained segments from the chosen map style. New layout each new game. */
-function buildLevel(){
-  map.fill(0);LC=LENGTHS[lenIdx].cols;const fin=LC-8;FINISH_X=fin*T;
-  const R=(a,b)=>a+Math.floor(Math.random()*(b-a+1));
-  const set=(x,y,v)=>{if(x>=0&&x<LC&&y>=0&&y<ROWS)map[y*COLS+x]=v};
-  const ground=(x0,x1,top=9)=>{for(let x=x0;x<=x1;x++)for(let y=top;y<ROWS;y++)set(x,y,1)};
-  const block=(x0,x1,y0,y1,v)=>{for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)set(x,y,v)};
-  let x=6;ground(0,5);
-  const SEG={
-    flat:()=>{const w=R(3,5);ground(x,x+w-1);return w},
-    pit:()=>{ground(x+2,x+4);return 5},
-    pillar:()=>{ground(x+2,x+3,8);ground(x+6,x+8);return 9},
-    tunnel:()=>{const L=R(5,8);ground(x,x+L+3);block(x+2,x+L+1,5,7,2);return L+4},
-    wall:()=>{const h=R(4,5),w=R(4,7);ground(x,x+2);ground(x+3,x+2+w,9-h);ground(x+3+w,x+5+w);return w+6},
-    stairs:()=>{ground(x,x+1);ground(x+2,x+3,8);ground(x+4,x+5,7);ground(x+6,x+7,6);ground(x+8,x+10);return 11},
-    planks:()=>{ground(x,x+6);block(x+2,x+4,6,6,3);return 7}
-  };
-  let bag=[];
-  while(x<=fin-19){
-    if(!bag.length){bag=MAPS[mapIdx].segs.slice();for(let i=bag.length-1;i>0;i--){const j=R(0,i);[bag[i],bag[j]]=[bag[j],bag[i]]}}
-    x+=SEG[bag.pop()]();
-  }
-  ground(x,LC-1);
-  const safe=c=>solidTile(c,9)&&solidTile(c+1,9)&&[5,6,7,8].every(y=>!solidTile(c,y)&&!solidTile(c+1,y));
-  CHECKS=[2];
-  [.25,.5,.75].forEach(f=>{let c=Math.round(fin*f);while(c<fin-6&&!safe(c))c++;if(c<fin-6&&c>CHECKS[CHECKS.length-1]+8)CHECKS.push(c)});
+const isSolo=()=>net.mode==='solo';
+/* Level: chained segments from the chosen map style. Solo mode keeps adding segments forever. */
+const R=(a,b)=>a+Math.floor(Math.random()*(b-a+1));
+const setT=(x,y,v)=>{if(x>=0&&x<LC&&y>=0&&y<ROWS)map[y*COLS+x]=v};
+const ground=(x0,x1,top=9)=>{for(let x=x0;x<=x1;x++)for(let y=top;y<ROWS;y++)setT(x,y,1)};
+const block=(x0,x1,y0,y1,v)=>{for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)setT(x,y,v)};
+const SEG={
+  flat:x=>{const w=R(3,5);ground(x,x+w-1);return w},
+  pit:x=>{ground(x+2,x+4);return 5},
+  pillar:x=>{ground(x+2,x+3,8);ground(x+6,x+8);return 9},
+  tunnel:x=>{const L=R(5,8);ground(x,x+L+3);block(x+2,x+L+1,5,7,2);return L+4},
+  wall:x=>{const h=R(4,5),w=R(4,7);ground(x,x+2);ground(x+3,x+2+w,9-h);ground(x+3+w,x+5+w);return w+6},
+  stairs:x=>{ground(x,x+1);ground(x+2,x+3,8);ground(x+4,x+5,7);ground(x+6,x+7,6);ground(x+8,x+10);return 11},
+  planks:x=>{ground(x,x+6);block(x+2,x+4,6,6,3);return 7}
+};
+let gen={x:6,bag:[]};
+function nextSeg(){
+  if(!gen.bag.length){gen.bag=MAPS[mapIdx].segs.slice();for(let i=gen.bag.length-1;i>0;i--){const j=R(0,i);[gen.bag[i],gen.bag[j]]=[gen.bag[j],gen.bag[i]]}}
+  gen.x+=SEG[gen.bag.pop()](gen.x);
 }
-buildLevel();
+const safeCol=c=>solidTile(c,9)&&solidTile(c+1,9)&&[5,6,7,8].every(y=>!solidTile(c,y)&&!solidTile(c+1,y));
+function extendLevel(toTx){
+  while(gen.x<toTx&&gen.x<COLS-24){
+    const start=gen.x;nextSeg();
+    const last=CHECKS[CHECKS.length-1];
+    if(gen.x-last>26)for(let c=Math.max(start,last+18);c<gen.x-1;c++)if(safeCol(c)){CHECKS.push(c);break}
+  }
+  if(gen.x>=COLS-24)ground(gen.x,COLS-1);
+}
+function buildLevel(){
+  map.fill(0);gen={x:6,bag:[]};CHECKS=[2];
+  if(isSolo()){LC=COLS;FINISH_X=Infinity;ground(0,5);extendLevel(70);return}
+  LC=LENGTHS[lenIdx].cols;const fin=LC-8;FINISH_X=fin*T;
+  ground(0,5);
+  while(gen.x<=fin-19)nextSeg();
+  ground(gen.x,LC-1);
+  [.25,.5,.75].forEach(f=>{let c=Math.round(fin*f);while(c<fin-6&&!safeCol(c))c++;if(c<fin-6&&c>CHECKS[CHECKS.length-1]+8)CHECKS.push(c)});
+}
 
 /* ---------- audio ---------- */
 let ac=null,muted=false;
@@ -296,7 +313,7 @@ function onMsg(m){
   }else{
     if(m.k==='full'){netError('That room already has 2 players.');return}
     if(m.k==='welcome'){net.peer=true;net.status='Joined! Waiting for the host...';return}
-    if(m.k==='start'){net.peer=true;for(let i=0;i<map.length;i++)map[i]=+m.map[i]||0;LC=m.lc;FINISH_X=(LC-8)*T;CHECKS=m.ch;net.gotMap=true;boxes=[];parts=[];return}
+    if(m.k==='start'){net.peer=true;map.fill(0);LC=m.lc;for(let y=0;y<ROWS;y++)for(let x=0;x<LC;x++)map[y*COLS+x]=+m.map[y*LC+x]||0;FINISH_X=(LC-8)*T;CHECKS=m.ch;net.gotMap=true;boxes=[];parts=[];return}
     if(m.k==='s'&&net.gotMap)applySnap(m);
   }
 }
@@ -348,10 +365,15 @@ function guestUpdate(dt){
 /* ---------- input ---------- */
 const down=new Set(),pressed=new Set();
 const KEYS=[{l:'KeyA',r:'KeyD',u:'KeyW',d:'KeyS'},{l:'ArrowLeft',r:'ArrowRight',u:'ArrowUp',d:'ArrowDown'}];
-addEventListener('keydown',e=>{if(e.target===codeEl)return;if(e.code==='KeyF'&&state!=='join'){toggleFs();return}if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();if(!e.repeat)pressed.add(e.code);down.add(e.code);audioInit()});
+addEventListener('keydown',e=>{if(e.target===codeEl||e.target===nameIn)return;if(e.code==='KeyF'&&state!=='join'){toggleFs();return}if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();if(!e.repeat)pressed.add(e.code);down.add(e.code);audioInit()});
 addEventListener('keyup',e=>down.delete(e.code));
 addEventListener('blur',()=>{down.clear();if(state==='play'&&!net.role)state='pause'});
 const codeEl=document.getElementById('code');
+const nameBox=document.getElementById('nameBox'),nameIn=document.getElementById('nameIn');
+nameBox.addEventListener('submit',e=>{e.preventDefault();submitName()});
+document.getElementById('nameSkip').addEventListener('click',()=>{solo.phase='board'});
+nameIn.addEventListener('keydown',e=>{if(e.key==='Escape')solo.phase='board'});
+function syncName(){const show=state==='soloOver'&&solo.phase==='name';if(nameBox.hidden===show){nameBox.hidden=!show;if(show&&!isTouch){try{nameIn.focus({preventScroll:true})}catch(e){}}}}
 codeEl.addEventListener('input',()=>{joinBuf=codeEl.value.toUpperCase().replace(/[^A-Z]/g,'').slice(0,4);codeEl.value=joinBuf;SFX.sel();if(joinBuf.length===4)tryJoin()});
 codeEl.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();tryJoin()}else if(e.key==='Escape'){state='title';syncCode()}});
 function tryJoin(){if(state==='join'&&joinBuf.length===4){openRoom('guest',joinBuf);syncCode()}}
@@ -378,7 +400,7 @@ if(matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches)
 touchEl.querySelectorAll('button:not([data-fs])').forEach(b=>{
   const pad=b.closest('.pad');
   const code=()=>b.dataset.code||KEYS[pad?+pad.dataset.p:0][b.dataset.k];
-  const on=e=>{e.preventDefault();audioInit();const c=code();b.classList.add('on');try{b.setPointerCapture(e.pointerId)}catch(_){}if(!down.has(c))pressed.add(c);down.add(c)};
+  const on=e=>{e.preventDefault();audioInit();if(b.dataset.code==='Escape'&&state==='soloOver'){if(solo.phase==='board')toMenu();return}const c=code();b.classList.add('on');try{b.setPointerCapture(e.pointerId)}catch(_){}if(!down.has(c))pressed.add(c);down.add(c)};
   const off=e=>{b.classList.remove('on');down.delete(code())};
   b.addEventListener('pointerdown',on);b.addEventListener('pointerup',off);b.addEventListener('pointercancel',off);b.addEventListener('lostpointercapture',off);
   b.addEventListener('contextmenu',e=>e.preventDefault());
@@ -386,9 +408,9 @@ touchEl.querySelectorAll('button:not([data-fs])').forEach(b=>{
 let touchSig='';
 function syncTouch(){
   if(touchEl.hidden)return;
-  const mode=net.role?'online':'local';
+  const mode=net.role||isSolo()?'online':'local';
   const role=p=>runner&&runner.pi===p&&state!=='title'?'run':crane&&crane.pi===p&&state!=='title'?'drop':'';
-  const ingame=['intro','play','pause'].includes(state);
+  const ingame=['intro','play','pause'].includes(state);touchEl.classList.toggle('over',state==='soloOver');
   const r0=net.role?role(net.me):role(0),r1=role(1),sig=mode+r0+r1+ingame;
   if(sig===touchSig)return;touchSig=sig;touchEl.dataset.mode=mode;touchEl.classList.toggle('ingame',ingame);
   if(!ingame){down.clear();touchEl.querySelectorAll('.on').forEach(b=>b.classList.remove('on'))}
@@ -398,8 +420,9 @@ function syncTouch(){
 }
 const MENU_Y=[40,56,72,90,103];
 const menuRows=()=>net.mode==='online'?5:4;
-function menuAct(i){if(net.mode==='local'){newGame();return}if(i===4){state='join';joinBuf='';syncCode();return}hostRoom()}
-function menuChange(i,d){if(i===0){net.mode=net.mode==='local'?'online':'local';if(menuSel>=menuRows())menuSel=menuRows()-1;SFX.sel();return}if(i===1)mapIdx=(mapIdx+d+MAPS.length)%MAPS.length;else if(i===2)lenIdx=(lenIdx+d+LENGTHS.length)%LENGTHS.length;else return;buildLevel();SFX.sel()}
+const MODES=['local','online','solo'],MODE_NAME={local:'LOCAL',online:'ONLINE',solo:'SOLO'};
+function menuAct(i){if(net.mode!=='online'){newGame();return}if(i===4){state='join';joinBuf='';syncCode();return}hostRoom()}
+function menuChange(i,d){if(i===0){net.mode=MODES[(MODES.indexOf(net.mode)+d+MODES.length)%MODES.length];if(menuSel>=menuRows())menuSel=menuRows()-1;buildLevel();SFX.sel();return}if(i===2&&isSolo())return;if(i===1)mapIdx=(mapIdx+d+MAPS.length)%MAPS.length;else if(i===2)lenIdx=(lenIdx+d+LENGTHS.length)%LENGTHS.length;else return;buildLevel();SFX.sel()}
 function gpos(e){const r=cv.getBoundingClientRect();return[(e.clientX-r.left)/r.width*W,(e.clientY-r.top)/r.height*H]}
 function menuRow(gy){for(let i=0;i<menuRows();i++){const y=MENU_Y[i];if(gy>=y-3&&gy<=y+(i<3?12:9))return i}return -1}
 cv.addEventListener('pointerdown',e=>{cv.focus();audioInit();const[gx,gy]=gpos(e);
@@ -407,8 +430,8 @@ cv.addEventListener('pointerdown',e=>{cv.focus();audioInit();const[gx,gy]=gpos(e
   else if(state!=='play'&&state!=='lobby'&&state!=='join')pressed.add('Enter')});
 cv.addEventListener('pointermove',e=>{if(state!=='title')return;const i=menuRow(gpos(e)[1]);if(i>=0)menuSel=i});
 const myKeys=k=>down.has(KEYS[0][k])||down.has(KEYS[1][k]);
-const held=(pi,k)=>net.role?(pi===net.me?myKeys(k):!!net.rh[k]):down.has(KEYS[pi][k]);
-const tap=(pi,k)=>net.role?(pi===net.me?(pressed.has(KEYS[0][k])||pressed.has(KEYS[1][k])):net.rtap.has(k)):pressed.has(KEYS[pi][k]);
+const held=(pi,k)=>isSolo()?(pi===0&&myKeys(k)):net.role?(pi===net.me?myKeys(k):!!net.rh[k]):down.has(KEYS[pi][k]);
+const tap=(pi,k)=>isSolo()?(pi===0&&(pressed.has(KEYS[0][k])||pressed.has(KEYS[1][k]))):net.role?(pi===net.me?(pressed.has(KEYS[0][k])||pressed.has(KEYS[1][k])):net.rtap.has(k)):pressed.has(KEYS[pi][k]);
 const go=()=>pressed.has('Enter')||pressed.has('Space')||pressed.has('NumpadEnter')||(net.role==='host'&&net.rtap.has('g'));
 const pauseKey=()=>pressed.has('Escape')||pressed.has('KeyP')||(net.role==='host'&&net.rtap.has('p'));
 const quitKey=()=>pressed.has('KeyQ')||(net.role==='host'&&net.rtap.has('q'));
@@ -419,7 +442,61 @@ let state='title',round=0,scores=[0,0],runner=null,crane=null,boxes=[],parts=[],
 
 function newRunner(pi){return{pi,x:CHECKS[0]*T+3,y:9*T-20,w:10,h:20,vx:0,vy:0,face:1,ground:false,coyote:0,buffer:0,slideT:0,sliding:false,stun:0,inv:0,wall:0,anim:0,check:0,best:0}}
 function toMenu(){if(net.role)leaveRoom();state='title';runner=null;crane=null;boxes=[];parts=[];pops=[];buildLevel()}
-function newGame(){scores=[0,0];buildLevel();if(net.role==='host')send({k:'start',map:Array.from(map).join(''),lc:LC,ch:CHECKS});startRound(0)}
+function newGame(){if(isSolo()){startSolo();return}scores=[0,0];buildLevel();if(net.role==='host'){let m='';for(let y=0;y<ROWS;y++)for(let x=0;x<LC;x++)m+=map[y*COLS+x];send({k:'start',map:m,lc:LC,ch:CHECKS})};startRound(0)}
+let lives=3;
+const solo={phase:'board',dist:0,best:0,top:null,myId:null,msg:'',lvl:0};
+function loadBest(){try{return +localStorage.getItem('cdd-best')||0}catch(e){return 0}}
+function startSolo(){
+  buildLevel();round=0;scores=[0,0];
+  boxes=[];parts=[];pops=[];runner=newRunner(0);lives=3;
+  crane={pi:1,sx:W/2+40,type:0,cd:1.5,kick:0,plan:null,ai:true};
+  timeLeft=0;cam.x=0;roundHits=0;state='intro';introT=3.2;lastTick=4;solo.best=loadBest();
+}
+const meters=()=>runner?Math.max(0,Math.floor((runner.best-CHECKS[0]*T)/T)):0;
+const aiLevel=()=>Math.min(12,Math.floor(meters()/40));
+function loseLife(){
+  if(!isSolo())return;lives--;
+  if(lives<=0)setTimeout(()=>{if(isSolo()&&state==='play')endSolo()},700);
+}
+function endSolo(){
+  state='soloOver';endT=0;SFX.lose();
+  solo.dist=meters();solo.lvl=aiLevel();solo.best=Math.max(loadBest(),solo.dist);
+  try{localStorage.setItem('cdd-best',String(solo.best))}catch(e){}
+  solo.myId=null;solo.msg='';solo.top=undefined;solo.phase=solo.dist>0?'name':'board';
+  lbTop().then(t=>{solo.top=t});
+  try{nameIn.value=localStorage.getItem('cdd-name')||''}catch(e){}
+}
+async function lbTop(){try{const{data,error}=await sbClient().from('leaderboard').select('id,name,distance,map').order('distance',{ascending:false}).limit(10);if(error)throw error;return data}catch(e){return null}}
+async function lbSave(name,distance,mapName){try{const{data,error}=await sbClient().from('leaderboard').insert({name,distance,map:mapName}).select('id').single();if(error)throw error;return data.id}catch(e){return null}}
+async function submitName(){
+  const name=nameIn.value.trim().slice(0,12);
+  if(!name){nameIn.focus();return}
+  try{localStorage.setItem('cdd-name',name)}catch(e){}
+  solo.phase='saving';nameIn.blur();
+  const id=await lbSave(name,solo.dist,MAPS[mapIdx].name);
+  if(id===null)solo.msg='Could not save online. Your best is kept on this device.';
+  solo.myId=id;solo.top=await lbTop();solo.phase='board';
+}
+/* computer crane: aims better, moves faster and reloads quicker the further you run */
+function dropBox(c){const k=BOXTYPES[c.type];
+  boxes.push({id:++boxSeq,kind:k,x:Math.round(cam.x+c.sx-8),y:26,w:16,h:16,vy:40,landed:false,squash:0,fresh:true,age:0});
+  c.kick=.15;SFX.drop();return k}
+function updateAI(dt){
+  const c=crane,r=runner,L=aiLevel();
+  c.cd=Math.max(0,c.cd-dt);c.kick=Math.max(0,c.kick-dt);
+  if(!c.plan){
+    const pool=['crate','crate','crate'];if(L>=2)pool.push('spring');if(L>=4)pool.push('iron','crate');if(L>=7)pool.push('iron');
+    c.type=BOXTYPES.indexOf(pool[R(0,pool.length-1)]);
+    c.plan={err:(Math.random()*2-1)*Math.max(3,40-L*3.2),wait:Math.max(.12,1.1-L*.08)*(.6+Math.random()*.8)};
+  }
+  const gm=BOX[BOXTYPES[c.type]].grav,dy=Math.max(8,r.y-42);
+  const tf=Math.sqrt(2*dy/(950*gm)),lead=Math.min(1.1,.15+L*.09);
+  const target=r.x+r.w/2+r.vx*tf*lead+c.plan.err-cam.x;
+  const dx=target-c.sx,spd=55+L*14;
+  c.sx=clamp(c.sx+clamp(dx,-spd*dt,spd*dt),12,W-12);
+  if(c.cd<=0&&r.inv<=0){c.plan.wait-=dt;
+    if(c.plan.wait<=0&&Math.abs(dx)<4){const k=dropBox(c);c.cd=BOX[k].cd*Math.max(.5,1.7-L*.1);c.plan=null}}
+}
 function startRound(r){
   round=r;const run=r===0?0:1,drop=1-run;
   boxes=[];parts=[];pops=[];runner=newRunner(run);
@@ -453,13 +530,13 @@ function respawn(r){
   const spot={x:cx,y:9*T-20,w:10,h:20};
   for(const b of boxes.slice())if(b.landed&&aabb({x:spot.x-8,y:spot.y-40,w:26,h:60},b))removeBox(b);
   Object.assign(r,{x:cx,y:spot.y,vx:0,vy:0,sliding:false,h:20,stun:0,inv:1.3,face:1});
-  SFX.fall();pop('OOPS!',cx+5,spot.y-6,'#ffffff');
+  SFX.fall();pop('OOPS!',cx+5,spot.y-6,'#ffffff');loseLife();
 }
 function stunRunner(b){
   const r=runner;standUp(r);
   const d=(r.x+r.w/2)<(b.x+8)?-1:1;
   r.vx=d*150;r.vy=-200;r.stun=BOX[b.kind].stun;r.inv=r.stun+.6;r.ground=false;
-  roundHits++;addShake(.3);SFX.hit();
+  roundHits++;addShake(.3);SFX.hit();loseLife();
   burst(r.x+5,r.y+2,['#ffd34e','#ffffff'],10,120,300,.5);
   pop(b.kind==='iron'?'CLANG!':'BONK!',r.x+5,r.y-8,PCOL[crane.pi].main);
 }
@@ -527,9 +604,7 @@ function updateCrane(dt){
   if(held(pi,'l'))m-=1;if(held(pi,'r'))m+=1;
   c.sx=clamp(c.sx+m*170*dt,12,W-12);c.cd=Math.max(0,c.cd-dt);c.kick=Math.max(0,c.kick-dt);
   if(tap(pi,'u')){c.type=(c.type+1)%3;SFX.sel()}
-  if(tap(pi,'d')&&c.cd<=0){const k=BOXTYPES[c.type];
-    boxes.push({id:++boxSeq,kind:k,x:Math.round(cam.x+c.sx-8),y:26,w:16,h:16,vy:40,landed:false,squash:0,fresh:true,age:0});
-    c.cd=BOX[k].cd;c.kick=.15;SFX.drop()}
+  if(tap(pi,'d')&&c.cd<=0){const k=dropBox(c);c.cd=BOX[k].cd}
 }
 function updateBoxes(dt){
   for(let i=boxes.length-1;i>=0;i--){const b=boxes[i];
@@ -587,7 +662,7 @@ function update(dt){
     case'join':{if(pressed.has('Escape')){state='title';break}if(pressed.has('Enter'))tryJoin();break}
     case'lobby':{updateParts(dt);if(pressed.has('Escape'))toMenu();if(net.role==='guest')guestUpdate(dt);break}
     case'netmsg':{if(go()||pressed.has('Escape'))toMenu();break}
-    case'title':{const span=LC*T-W,p=(time*25)%(2*span);cam.x=p<span?p:2*span-p;updateParts(dt);
+    case'title':{const span=(isSolo()?gen.x:LC)*T-W,p=(time*25)%(2*span);cam.x=p<span?p:2*span-p;updateParts(dt);
       const has=(...k)=>k.some(c=>pressed.has(c));
       const n=menuRows();
       if(has('KeyW','ArrowUp')){menuSel=(menuSel+n-1)%n;SFX.sel()}
@@ -599,11 +674,14 @@ function update(dt){
       updateParts(dt);updateCam(dt);updateBoxes(dt);
       if(introT<=0){state='play';goT=.8;SFX.go()}break}
     case'play':{if(pauseKey()){state='pause';break}
-      goT=Math.max(0,goT-dt);timeLeft-=dt;
-      if(timeLeft<=0){timeLeft=0;endRound(false);break}
-      updateCrane(dt);updateRunner(dt);if(state!=='play')break;updateBoxes(dt);updateParts(dt);updateCam(dt);break}
+      goT=Math.max(0,goT-dt);
+      if(isSolo()){extendLevel(Math.floor(runner.x/T)+40);updateAI(dt)}
+      else{timeLeft-=dt;if(timeLeft<=0){timeLeft=0;endRound(false);break}updateCrane(dt)}
+      updateRunner(dt);if(state!=='play')break;updateBoxes(dt);updateParts(dt);updateCam(dt);break}
     case'pause':{if(quitKey()){toMenu();break}if(pauseKey()||go())state='play';break}
     case'roundEnd':{endT+=dt;updateParts(dt);updateBoxes(dt);if(endT>.8&&go()){if(round===0)startRound(1);else{state='final';endT=0;SFX.win()}}break}
+    case'soloOver':{endT+=dt;updateParts(dt);updateBoxes(dt);
+      if(solo.phase==='board'&&endT>.8){if(go()){newGame();break}if(pressed.has('Escape')||quitKey()){toMenu();break}}break}
     case'final':{endT+=dt;updateParts(dt);if(endT>.8&&(pressed.has('Escape')||quitKey())){toMenu();break}if(endT>.8&&go()){newGame()}break}
   }
 }
@@ -630,10 +708,10 @@ function drawWorld(){
   for(let ty=0;ty<ROWS;ty++)for(let tx=t0;tx<=t1;tx++){const v=map[ty*COLS+tx];if(!v)continue;
     const tex=v===1?((ty===0||!map[(ty-1)*COLS+tx])?TEX.grass:TEX.dirt):v===2?TEX.stone:TEX.plank;g.drawImage(tex,tx*T,ty*T)}
   // checkpoints
-  for(let i=1;i<CHECKS.length;i++){const x=CHECKS[i]*T+2,base=9*T,on=runner&&runner.check>=i;
+  for(let i=1;i<CHECKS.length;i++){const x=CHECKS[i]*T+2,base=9*T,on=runner&&runner.check>=i;if(x<cx-16||x>cx+W+16)continue;
     g.fillStyle='#4a4766';g.fillRect(x,base-22,1,22);g.fillStyle=on?'#7bd35a':'#f3eedd';g.fillRect(x+1,base-22,7,5);g.fillStyle=on?'#4fa83d':'#c9c3dd';g.fillRect(x+1,base-18,7,1)}
   // finish flag
-  {const x=FINISH_X,base=9*T;g.fillStyle='#4a4766';g.fillRect(x,base-46,2,46);g.fillStyle='#ffd34e';g.fillRect(x-1,base-48,4,3);
+  if(isFinite(FINISH_X)){const x=FINISH_X,base=9*T;g.fillStyle='#4a4766';g.fillRect(x,base-46,2,46);g.fillStyle='#ffd34e';g.fillRect(x-1,base-48,4,3);
     const wave=Math.round(Math.sin(time*6));for(let i=0;i<5;i++)for(let j=0;j<3;j++){g.fillStyle=(i+j)%2?'#231a36':'#ffffff';g.fillRect(x+2+i*3,base-45+j*3+(i>2?wave:0),3,3)}}
   // boxes
   for(const b of boxes){if(b.age>8.5&&Math.floor(time*(b.age>10?16:8))%2)continue;if(b.kind==='spring'&&b.squash>0)g.drawImage(TEX.spring,Math.round(b.x),Math.round(b.y)+3,16,13);else g.drawImage(TEX[b.kind],Math.round(b.x),Math.round(b.y))}
@@ -677,11 +755,13 @@ function txt(s,x,y,size,col,align='left'){
 }
 function panel(x,y,w,h){ctx.fillStyle='rgba(21,19,43,.88)';ctx.fillRect(x*S,y*S,w*S,h*S);ctx.strokeStyle='#4a4580';ctx.lineWidth=S;ctx.strokeRect(x*S+S/2,y*S+S/2,w*S-S,h*S-S)}
 const blink=()=>Math.floor(time*2.2)%2===0;
+const HEART=['.xx.xx.','xxxxxxx','xxxxxxx','.xxxxx.','..xxx..','...x...'];
+function heart(x,y,full){HEART.forEach((row,j)=>{for(let i=0;i<7;i++)if(row[i]==='x'){ctx.fillStyle=full?'#ff5b6b':'rgba(255,255,255,.25)';ctx.fillRect((x+i)*S,(y+j)*S,S,S)}})}
 
 function render(){
   drawWorld();
   if(state!=='title'&&crane)drawCrane();
-  if(runner&&state!=='title')drawProgress();
+  if(runner&&state!=='title'&&isFinite(FINISH_X))drawProgress();
   ctx.drawImage(buf,0,0,W*S,H*S);
 
   for(const p of pops){const a=1-p.t;ctx.globalAlpha=Math.max(0,a);txt(p.text,p.x-cam.x,p.y-p.t*14,6,p.col,'center');ctx.globalAlpha=1}
@@ -691,20 +771,20 @@ function render(){
     txt('CRATE DROP DASH',160,12,12,'#ffd34e','center');
     txt('1 runs the course, 1 drops boxes, then swap',160,28,4.5,'#c9c3dd','center');
     const online=net.mode==='online';
-    const rows=[['MODE',online?'ONLINE':'LOCAL'],['MAP',MAPS[mapIdx].name],['LENGTH',LENGTHS[lenIdx].name]];
+    const rows=[['MODE',MODE_NAME[net.mode]],['MAP',MAPS[mapIdx].name],['LENGTH',isSolo()?'ENDLESS':LENGTHS[lenIdx].name]];
     rows.forEach(([k,v],i)=>{const y=MENU_Y[i],on=menuSel===i,c=on?'#ffd34e':'#f3eedd';
       txt((on?'> ':'  ')+k,40,y,7,c);const vc=on?'#ffffff':'#c9c3dd';txt('<',182,y,7,on?'#ffd34e':vc,'center');txt(v,230,y,7,vc,'center');txt('>',278,y,7,on?'#ffd34e':vc,'center')});
-    txt(online?'Each player on their own computer':'2 players share this keyboard',230,MENU_Y[0]+9,4,'#aaa4cb','center');
+    txt(online?'Each player on their own device':isSolo()?'1 player vs the computer crane':isTouch?'2 players share this phone':'2 players share this keyboard',230,MENU_Y[0]+9,4,'#aaa4cb','center');
     txt(MAPS[mapIdx].desc,230,MENU_Y[1]+9,4,'#aaa4cb','center');
     (online?['CREATE ROOM','JOIN ROOM']:['START']).forEach((a,j)=>{const i=3+j,y=MENU_Y[i],on=menuSel===i;
       txt((on?'> ':'  ')+a,40,y,7,on?'#ffd34e':'#f3eedd');if(on&&blink())txt('ENTER OR CLICK',230,y+1,6,'#ffffff','center')});
-    const mw=LC*2,mx=160-mw/2,my=118;
+    const mcols=Math.min(LC,128),mw=mcols*2,mx=160-mw/2,my=118;
     ctx.fillStyle='#6cc4f5';ctx.fillRect(mx*S,my*S,mw*S,ROWS*2*S);
     const cols={1:'#7a4f33',2:'#6b6f8f',3:'#b97a40'};
-    for(let ty=0;ty<ROWS;ty++)for(let tx=0;tx<LC;tx++){const v=map[ty*COLS+tx];if(!v)continue;
+    for(let ty=0;ty<ROWS;ty++)for(let tx=0;tx<mcols;tx++){const v=map[ty*COLS+tx];if(!v)continue;
       ctx.fillStyle=(v===1&&(ty===0||!map[(ty-1)*COLS+tx]))?'#4fa83d':cols[v];ctx.fillRect((mx+tx*2)*S,(my+ty*2)*S,2*S,2*S)}
-    CHECKS.slice(1).forEach(c=>{ctx.fillStyle='#f3eedd';ctx.fillRect((mx+c*2)*S,(my+12)*S,S,6*S)});
-    ctx.fillStyle='#ffd34e';ctx.fillRect((mx+(LC-8)*2)*S,(my+6)*S,2*S,12*S);
+    CHECKS.slice(1).forEach(c=>{if(c<mcols){ctx.fillStyle='#f3eedd';ctx.fillRect((mx+c*2)*S,(my+12)*S,S,6*S)}});
+    if(isSolo())txt('... and on forever',mx+mw-2,my+24,4,'#c9c3dd','right');else{ctx.fillStyle='#ffd34e';ctx.fillRect((mx+(LC-8)*2)*S,(my+6)*S,2*S,12*S)}
     txt(isTouch?'Tap < > to change an option, tap a button to start':'Click < > to change, or use W S A D / arrow keys. Enter starts.',160,146,4,'#c9c3dd','center');
     txt(online?'The room creator picks the map and length':isTouch?'On one phone: P1 uses the left pad, P2 the right':'Click the game first if keys do nothing',160,156,4,'#aaa4cb','center');
     return;
@@ -739,6 +819,40 @@ function render(){
   }
   if(!runner||!crane)return;
 
+  if(isSolo()&&state!=='soloOver'){
+    txt(meters()+' m',160,2,10,'#ffffff','center');
+    txt('BEST '+Math.max(solo.best,meters())+' m',8,11.5,4,'#f3eedd');
+    for(let i=0;i<3;i++)heart(8+i*11,4,i<lives);
+    txt('CRANE LV '+(aiLevel()+1),W-6,3,6,PCOL[1].main,'right');
+    txt('gets tougher every 40 m',W-6,10.5,4,'#f3eedd','right');
+    if(state==='intro'){panel(70,52,180,76);txt('SOLO RUN',160,60,8,'#ffd34e','center');
+      txt('Run as far as you can',160,76,6,PCOL[0].main,'center');txt('3 lives. Boxes and pits cost one.',160,86,5,'#f3eedd','center');
+      txt(String(Math.max(1,Math.ceil(introT))),160,100,14,'#ffffff','center')}
+    if(state==='play'&&goT>0)txt('GO!',160,70,20,'#ffd34e','center');
+    if(state==='pause'){panel(90,62,140,48);txt('PAUSED',160,72,10,'#ffd34e','center');txt('Enter or Esc to resume',160,90,5,'#f3eedd','center');txt('Q to quit to menu',160,99,5,'#aaa4cb','center')}
+    if(muted)txt('MUTED',W-6,H-12,4.5,'#aaa4cb','right');
+    return;
+  }
+  if(state==='soloOver'){
+    panel(40,10,240,160);
+    txt('GAME OVER',160,16,10,'#ff5b6b','center');
+    txt('You ran '+solo.dist+' m',160,31,7,'#ffffff','center');
+    txt('Your best: '+solo.best+' m   ·   crane reached LV '+(solo.lvl+1),160,42,4.5,'#c9c3dd','center');
+    if(solo.phase==='name'||solo.phase==='saving'){
+      txt(solo.phase==='saving'?'Saving...':'Add your score to the leaderboard',160,58,5.5,'#ffd34e','center');
+    }else{
+      txt('TOP 10',160,53,6,'#ffd34e','center');
+      if(solo.top===undefined)txt('Loading...',160,72,5,'#c9c3dd','center');
+      else if(!solo.top)txt('Leaderboard is offline here',160,72,5,'#c9c3dd','center');
+      else if(!solo.top.length)txt('No scores yet. Be the first!',160,72,5,'#c9c3dd','center');
+      else solo.top.forEach((e,i)=>{const y=63+i*7.4,me=e.id===solo.myId,c=me?'#ffd34e':'#f3eedd';
+        txt((i+1)+'.',72,y,5,c,'right');txt(e.name,78,y,5,c);txt(e.distance+' m',248,y,5,c,'right')});
+      if(solo.msg)txt(solo.msg,160,138,4,'#ff9aa5','center');
+      if(endT>.8&&blink())txt(isTouch?'TAP TO RUN AGAIN':'ENTER: RUN AGAIN',160,146,6,'#ffd34e','center');
+      txt(isTouch?'Pause button: menu':'Esc: menu',160,157,4.5,'#aaa4cb','center');
+    }
+    return;
+  }
   // HUD
   const rp=PCOL[runner.pi],dp=PCOL[crane.pi];
   txt('RUNNER '+rp.name,6,3,6,rp.main);
@@ -789,8 +903,9 @@ function frame(now){
   let first=true;
   while(acc>=STEP){update(STEP);acc-=STEP;if(first){pressed.clear();net.rtap.clear();first=false}}
   if(net.role==='host'&&net.peer&&state!=='lobby'&&time-net.lastSend>=.05){net.lastSend=time;sendSnap()}
-  syncCode();syncTouch();render();requestAnimationFrame(frame);
+  syncCode();syncName();syncTouch();render();requestAnimationFrame(frame);
 }
+buildLevel();
 if(document.fonts&&document.fonts.load){document.fonts.load('16px "Silkscreen"').catch(()=>{})}
 try{cv.focus({preventScroll:true})}catch(e){}
 requestAnimationFrame(frame);
