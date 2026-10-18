@@ -1,0 +1,78 @@
+@font-face{font-family:"Silkscreen";font-weight:400;font-display:swap;src:url(fonts/silkscreen-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:"Silkscreen";font-weight:700;font-display:swap;src:url(fonts/silkscreen-latin-700-normal.woff2) format("woff2")}
+@font-face{font-family:"Pixelify Sans";font-weight:400;font-display:swap;src:url(fonts/pixelify-sans-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:"Pixelify Sans";font-weight:600;font-display:swap;src:url(fonts/pixelify-sans-latin-600-normal.woff2) format("woff2")}
+/* Layout: arcade cabinet column. Title strip, game screen, two player key cards. */
+:root{
+  --bg:#15132b; --panel:#211e42; --line:#37336a; --fg:#f3eedd; --muted:#aaa4cb;
+  --p1:#ff8a3d; --p2:#3ec9c0; --gold:#ffd34e;
+  --display:"Silkscreen","Courier New",monospace;
+  --body:"Pixelify Sans","Trebuchet MS",system-ui,sans-serif;
+  color-scheme:dark;
+}
+html,body{background:var(--bg);color:var(--fg)}
+body{font-family:var(--body);font-size:16px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 32px}
+.wrap{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 16px}
+h1{font-family:var(--display);font-weight:700;font-size:clamp(22px,4vw,34px);margin:0;letter-spacing:.02em;text-wrap:balance}
+h1 span{color:var(--gold)}
+.tag{color:var(--muted);font-size:15px}
+.screen{border:4px solid var(--line);border-radius:6px;background:#000;box-shadow:0 0 0 4px #0c0b1c,0 18px 40px rgba(0,0,0,.45)}
+canvas{display:block;width:100%;height:auto;aspect-ratio:16/9;image-rendering:pixelated;image-rendering:crisp-edges;outline:none;cursor:pointer}
+canvas:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
+.keys{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:12px}
+.card{background:var(--panel);border:2px solid var(--line);border-radius:6px;padding:12px 14px;display:grid;gap:10px;min-width:0}
+.card h2{font-family:var(--display);font-size:15px;margin:0;letter-spacing:.06em}
+.p1 h2{color:var(--p1)} .p2 h2{color:var(--p2)}
+.grid{display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 12px;align-items:center;font-size:14px}
+.grid .h{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+kbd{font-family:var(--display);font-size:12px;background:#0f0e22;border:1px solid var(--line);border-bottom-width:3px;border-radius:4px;padding:1px 6px;color:var(--fg);white-space:nowrap}
+.note{color:var(--muted);font-size:14px;margin:0;line-height:1.5;max-width:70ch}
+.note b{color:var(--fg);font-weight:600}
+.screen{position:relative}
+#code{position:absolute;left:35%;top:44%;width:31%;height:13%;opacity:0;font-size:16px;border:0;padding:0;background:transparent;color:transparent;caret-color:transparent}
+#code[hidden]{display:none}
+.namebox{position:absolute;left:50%;top:40%;transform:translateX(-50%);width:min(88%,440px);display:flex;gap:8px}
+.namebox[hidden]{display:none}
+.namebox input{flex:1;min-width:0;font-family:var(--display);font-size:16px;padding:8px 10px;border-radius:6px;border:2px solid var(--gold);background:#0f0e22;color:var(--fg)}
+.namebox button{font-family:var(--display);font-size:14px;padding:8px 12px;border-radius:6px;border:2px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer}
+.namebox button[type=submit]{background:var(--gold);color:#15132b;border-color:var(--gold)}
+.touch{display:flex;gap:10px;align-items:stretch;user-select:none;-webkit-user-select:none}
+.touch[hidden]{display:none}
+.pad{flex:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;padding:6px;border:2px solid var(--pc,var(--line));border-radius:8px;background:var(--panel);min-width:0}
+.pad[data-p="0"]{--pc:var(--p1)} .pad[data-p="1"]{--pc:var(--p2)}
+.touch button{min-width:0;font-family:var(--display);font-size:20px;color:var(--fg);background:#0f0e22;border:1px solid var(--line);border-bottom-width:4px;border-radius:8px;min-height:62px;padding:4px 0;touch-action:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;-webkit-tap-highlight-color:transparent}
+.touch button small{font-family:var(--body);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.touch button.on{background:var(--pc,var(--gold));color:#15132b;border-bottom-width:1px;transform:translateY(3px)}
+.touch button.on small{color:#15132b}
+.touch .pause{flex:0 0 52px;--pc:var(--gold)}
+.touch[data-mode="online"] .pad[data-p="1"]{display:none}
+.touch[data-mode="online"] .pad{grid-template-columns:repeat(2,minmax(0,1fr)) 2fr repeat(2,minmax(0,1fr))}
+.touch:not(.ingame) .pad,.touch:not(.ingame):not(.over) .pause{display:none!important}
+.touch:not(.ingame){justify-content:flex-end}
+@media (max-width:520px){.touch{gap:6px}.pad{gap:4px;padding:4px}.touch button{font-size:16px;min-height:52px}.touch button small{font-size:9px;letter-spacing:0}.touch .pause,.touch .fsb{flex-basis:40px}}
+.touch[data-mode="online"] .pad::after{content:"";order:2}
+.touch[data-mode="online"] .pad button[data-k="l"]{order:0}.touch[data-mode="online"] .pad button[data-k="r"]{order:1}
+.touch[data-mode="online"] .pad button[data-k="u"]{order:3}.touch[data-mode="online"] .pad button[data-k="d"]{order:4}
+.hdrbtn{font-family:var(--display);font-size:12px;color:var(--fg);background:var(--panel);border:2px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
+.hdrbtn:hover{border-color:var(--gold)}
+.hdrbtn:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.hdr-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.touch .fsb{flex:0 0 52px;--pc:var(--gold);font-size:22px;font-family:system-ui,sans-serif}
+.fstip{margin:0;padding:10px 12px;border:2px solid var(--gold);border-radius:6px;background:var(--panel);font-size:14px;line-height:1.45}
+.fstip[hidden]{display:none}
+body.fs{padding-block:6px}
+body.fs header,body.fs .note,body.fs .keys,body.fs .rotate{display:none!important}
+body.fs .wrap{gap:6px;max-width:none}
+body.fs .screen{width:min(100%,calc((100dvh - 24px) * 16 / 9));margin:0 auto}
+body.fs.touchdev .screen{width:min(100%,calc((100dvh - 96px) * 16 / 9))}
+body.fs .touch button{min-height:56px}
+.rotate{display:none;color:var(--gold);font-size:14px;margin:0;text-align:center}
+@media (pointer:coarse){.keys{display:none}}
+@media (pointer:coarse) and (orientation:portrait){.rotate{display:block}}
+@media (pointer:coarse) and (orientation:landscape){
+  body{padding-block:8px}
+  header,.note{display:none}
+  .wrap{gap:8px}
+  .screen{width:min(100%,calc((100dvh - 110px) * 16 / 9));margin:0 auto}
+}
