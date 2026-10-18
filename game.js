@@ -385,7 +385,7 @@ let lives=3;
 const solo={phase:'board',dist:0,best:0,top:null,myId:null,msg:'',lvl:0,run:null};
 function loadBest(){try{return +localStorage.getItem('cdd-best')||0}catch(e){return 0}}
 function startSolo(){
-  solo.run=null;try{const my={};solo.runReq=my;sbClient().rpc('start_run').then(({data})=>{if(solo.runReq===my&&typeof data==='string')solo.run=data},()=>{})}catch(e){}
+  solo.run=null;try{const my={};solo.runReq=my;sbClient().rpc('start_run').then(({data,error})=>{if(solo.runReq!==my)return;if(typeof data==='string')solo.run=data;else if(error&&(error.code==='PGRST202'||/not find|does not exist/i.test(error.message||'')))solo.run='legacy'},()=>{})}catch(e){}
   buildLevel();round=0;scores=[0,0];
   boxes=[];parts=[];pops=[];runner=newRunner(0);lives=3;
   crane={pi:1,sx:W/2+40,type:0,cd:3,kick:0,plan:null,ai:true};
@@ -406,7 +406,9 @@ function endSolo(){
   try{nameIn.value=localStorage.getItem('cdd-name')||''}catch(e){}
 }
 async function lbTop(){try{const{data,error}=await sbClient().from('leaderboard').select('id,name,distance,map').order('distance',{ascending:false}).limit(10);if(error)throw error;return data}catch(e){return null}}
-async function lbSave(name,distance,mapName){if(!solo.run)return null;try{const{data,error}=await sbClient().rpc('submit_score',{p_run:solo.run,p_name:name,p_distance:distance,p_map:mapName});solo.run=null;if(error)throw error;return data}catch(e){return null}}
+async function lbSave(name,distance,mapName){if(!solo.run)return null;
+  if(solo.run==='legacy'){solo.run=null;try{const{data,error}=await sbClient().from('leaderboard').insert({name,distance,map:mapName}).select('id').single();if(error)throw error;return data.id}catch(e){return null}} // until the secure DB functions are installed
+  try{const{data,error}=await sbClient().rpc('submit_score',{p_run:solo.run,p_name:name,p_distance:distance,p_map:mapName});solo.run=null;if(error)throw error;return data}catch(e){return null}}
 async function submitName(){
   const name=nameIn.value.replace(/[^A-Za-z0-9\u05D0-\u05EA _.!-]/g,'').trim().slice(0,12);
   if(!name){nameIn.focus();return}
